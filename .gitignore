@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.vsix
+
+# Review state persistence
+.claude/review-state.json
+.ccr-test/
+
+.env

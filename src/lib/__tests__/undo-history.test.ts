@@ -1,0 +1,244 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+vi.mock("vscode", () => import("./mocks/vscode"));
+vi.mock("../log", () => ({ log: vi.fn() }));
+
+import {
+	initHistory,
+	pushUndoState,
+	popUndoState,
+	pushRedoState,
+	popRedoState,
+	hasUndoState,
+	hasRedoState,
+	setApplyingEdit,
+	isApplyingEdit,
+	clearHistory,
+	clearAllHistories,
+} from "../undo-history";
+import type { IFileReview, ChangeType } from "../../types";
+
+function makeFakeReview(overrides?: Partial<IFileReview>): IFileReview {
+	return {
+		filePath: "/ws/file.ts",
+		originalContent: "old",
+		modifiedContent: "new",
+		changeType: "edit" as ChangeType,
+		hunks: [
+			{ id: 0, origStart: 1, origCount: 1, modStart: 1, modCount: 1, removed: ["old"], added: ["new"], resolved: false, accepted: false },
+		],
+		mergedLines: ["old", "new"],
+		hunkRanges: [{ hunkId: 0, removedStart: 0, removedEnd: 1, addedStart: 1, addedEnd: 2 }],
+		get unresolvedCount() { return this.hunks.filter(h => !h.resolved).length; },
+		get isFullyResolved() { return this.hunks.every(h => h.resolved); },
+		...overrides,
+	};
+}
+
+beforeEach(() => {
+	clearAllHistories();
+});
+
+describe("undo-history (stack-based)", () => {
+	it("pushUndoState + popUndoState round-trip", () => {
+		initHistory("/ws/file.ts");
+		const review = makeFakeReview();
+		pushUndoState("/ws/file.ts", review);
+
+		expect(hasUndoState("/ws/file.ts")).toBe(true);
+		const snapshot = popUndoState("/ws/file.ts");
+		expect(snapshot).toBeDefined();
+		expect(snapshot!.filePath).toBe("/ws/file.ts");
+		expect(snapshot!.hunks).toEqual(review.hunks);
+		expect(hasUndoState("/ws/file.ts")).toBe(false);
+	});
+
+	it("deep copy — mutation of original does not affect snapshot", () => {
+		initHistory("/ws/file.ts");
+		const review = makeFakeReview();
+		pushUndoState("/ws/file.ts", review);
+
+		review.hunks[0].resolved = true;
+		review.mergedLines.push("extra");
+
+		const snapshot = popUndoState("/ws/file.ts");
+		expect(snapshot!.hunks[0].resolved).toBe(false);
+		expect(snapshot!.mergedLines).toEqual(["old", "new"]);
+	});
+
+	it("popUndoState returns undefined when empty", () => {
+		initHistory("/ws/file.ts");
+		expect(popUndoState("/ws/file.ts")).toBeUndefined();
+	});
+
+	it("popUndoState returns undefined for unknown file", () => {
+		expect(popUndoState("/ws/nope.ts")).toBeUndefined();
+	});
+
+	it("stack order: LIFO", () => {
+		initHistory("/ws/file.ts");
+		const r1 = makeFakeReview({ mergedLines: ["state1"] });
+		const r2 = makeFakeReview({ mergedLines: ["state2"] });
+		const r3 = makeFakeReview({ mergedLines: ["state3"] });
+
+		pushUndoState("/ws/file.ts", r1);
+		pushUndoState("/ws/file.ts", r2);
+		pushUndoState("/ws/file.ts", r3);
+
+		expect(popUndoState("/ws/file.ts")!.mergedLines).toEqual(["state3"]);
+		expect(popUndoState("/ws/file.ts")!.mergedLines).toEqual(["state2"]);
+		expect(popUndoState("/ws/file.ts")!.mergedLines).toEqual(["state1"]);
+		expect(popUndoState("/ws/file.ts")).toBeUndefined();
+	});
+
+	it("pushUndoState clears redo stack", () => {
+		initHistory("/ws/file.ts");
+		const r1 = makeFakeReview({ mergedLines: ["state1"] });
+		const r2 = makeFakeReview({ mergedLines: ["state2"] });
+
+		pushRedoState("/ws/file.ts", r1);
+		expect(hasRedoState("/ws/file.ts")).toBe(true);
+
+		pushUndoState("/ws/file.ts", r2);
+		expect(hasRedoState("/ws/file.ts")).toBe(false);
+	});
+
+	it("redo stack round-trip", () => {
+		initHistory("/ws/file.ts");
+		const review = makeFakeReview();
+		pushRedoState("/ws/file.ts", review);
+
+		expect(hasRedoState("/ws/file.ts")).toBe(true);
+		const snapshot = popRedoState("/ws/file.ts");
+		expect(snapshot).toBeDefined();
+		expect(snapshot!.mergedLines).toEqual(review.mergedLines);
+		expect(hasRedoState("/ws/file.ts")).toBe(false);
+	});
+
+	it("clearHistory clears both stacks", () => {
+		initHistory("/ws/file.ts");
+		pushUndoState("/ws/file.ts", makeFakeReview());
+		pushRedoState("/ws/file.ts", makeFakeReview());
+
+		clearHistory("/ws/file.ts");
+		expect(hasUndoState("/ws/file.ts")).toBe(false);
+		expect(hasRedoState("/ws/file.ts")).toBe(false);
+	});
+
+	it("clearAllHistories clears everything", () => {
+		initHistory("/ws/a.ts");
+		initHistory("/ws/b.ts");
+		pushUndoState("/ws/a.ts", makeFakeReview());
+		pushUndoState("/ws/b.ts", makeFakeReview());
+
+		clearAllHistories();
+		expect(hasUndoState("/ws/a.ts")).toBe(false);
+		expect(hasUndoState("/ws/b.ts")).toBe(false);
+	});
+
+	it("isApplyingEdit guard flag", () => {
+		initHistory("/ws/file.ts");
+		expect(isApplyingEdit("/ws/file.ts")).toBe(false);
+		setApplyingEdit("/ws/file.ts", true);
+		expect(isApplyingEdit("/ws/file.ts")).toBe(true);
+		setApplyingEdit("/ws/file.ts", false);
+		expect(isApplyingEdit("/ws/file.ts")).toBe(false);
+	});
+
+	it("isApplyingEdit returns false for unknown file", () => {
+		expect(isApplyingEdit("/ws/nope.ts")).toBe(false);
+	});
+
+	it("pushUndoState without initHistory is a no-op", () => {
+		pushUndoState("/ws/file.ts", makeFakeReview());
+		expect(hasUndoState("/ws/file.ts")).toBe(false);
+	});
+
+	it("pushRedoState without initHistory is a no-op", () => {
+		pushRedoState("/ws/file.ts", makeFakeReview());
+		expect(hasRedoState("/ws/file.ts")).toBe(false);
+	});
+});
+
+describe("updateContextKeys side effects", () => {
+	let executeCommand: ReturnType<typeof vi.fn>;
+
+	beforeEach(async () => {
+		const vscode = await import("./mocks/vscode");
+		executeCommand = vscode.commands.executeCommand;
+		executeCommand.mockClear();
+	});
+
+	it("sets canUndo=true and canRedo=false after pushUndoState", () => {
+		initHistory("/ws/file.ts");
+		pushUndoState("/ws/file.ts", makeFakeReview());
+
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canUndoReview", true);
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canRedoReview", false);
+	});
+
+	it("sets canUndo=false after popUndoState empties the stack", () => {
+		initHistory("/ws/file.ts");
+		pushUndoState("/ws/file.ts", makeFakeReview());
+		executeCommand.mockClear();
+
+		popUndoState("/ws/file.ts");
+
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canUndoReview", false);
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canRedoReview", false);
+	});
+
+	it("sets canRedo=true after pushRedoState", () => {
+		initHistory("/ws/file.ts");
+		pushRedoState("/ws/file.ts", makeFakeReview());
+
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canRedoReview", true);
+	});
+
+	it("sets canRedo=false after popRedoState empties the stack", () => {
+		initHistory("/ws/file.ts");
+		pushRedoState("/ws/file.ts", makeFakeReview());
+		executeCommand.mockClear();
+
+		popRedoState("/ws/file.ts");
+
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canRedoReview", false);
+	});
+
+	it("multi-file canUndo: true when any file has undo, false when all cleared", () => {
+		initHistory("/ws/a.ts");
+		initHistory("/ws/b.ts");
+
+		pushUndoState("/ws/a.ts", makeFakeReview({ filePath: "/ws/a.ts" }));
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canUndoReview", true);
+
+		// Clear only a.ts history
+		clearHistory("/ws/a.ts");
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canUndoReview", false);
+	});
+
+	it("multi-file canUndo remains true when one file still has undo", () => {
+		initHistory("/ws/a.ts");
+		initHistory("/ws/b.ts");
+
+		pushUndoState("/ws/a.ts", makeFakeReview({ filePath: "/ws/a.ts" }));
+		pushUndoState("/ws/b.ts", makeFakeReview({ filePath: "/ws/b.ts" }));
+		executeCommand.mockClear();
+
+		// Clear only a.ts
+		clearHistory("/ws/a.ts");
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canUndoReview", true);
+	});
+
+	it("clearAllHistories sets both context keys to false", () => {
+		initHistory("/ws/a.ts");
+		pushUndoState("/ws/a.ts", makeFakeReview());
+		pushRedoState("/ws/a.ts", makeFakeReview());
+		executeCommand.mockClear();
+
+		clearAllHistories();
+
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canUndoReview", false);
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canRedoReview", false);
+	});
+});

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "WebFetch(domain:code.visualstudio.com)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}

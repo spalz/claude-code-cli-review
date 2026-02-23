@@ -1,0 +1,5 @@
+dist/
+node_modules/
+media/xterm.min.js
+media/addon-fit.min.js
+*.vsix
