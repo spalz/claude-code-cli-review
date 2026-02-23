@@ -11,6 +11,7 @@ const PORT = 27182;
 let server: http.Server | null = null;
 let _addFileToReview: ((filePath: string) => void) | null = null;
 let _workspacePath: string | undefined;
+let _getActiveReview: ((filePath: string) => import("../types").IFileReview | undefined) | null = null;
 
 // Before-content snapshots from PreToolUse hook
 const beforeSnapshots = new Map<string, string>();
@@ -21,6 +22,10 @@ export function setAddFileHandler(fn: (filePath: string) => void): void {
 
 export function setWorkspacePath(wp: string): void {
 	_workspacePath = wp;
+}
+
+export function setGetActiveReviewHandler(fn: (filePath: string) => import("../types").IFileReview | undefined): void {
+	_getActiveReview = fn;
 }
 
 export function getSnapshot(filePath: string): string | undefined {
@@ -67,20 +72,49 @@ function createServer(): http.Server {
 						const changes = parseBashCommand(data.command, _workspacePath);
 						const allFiles = [...changes.deleted, ...changes.modified];
 						for (const file of allFiles) {
-							try {
-								const content = fs.readFileSync(file, "utf8");
-								beforeSnapshots.set(file, content);
-								log.log(`/snapshot: stored ${content.length} chars for ${file} (Bash)`);
-							} catch {
-								// File may not exist yet (e.g. touch new file)
+							// If file has active review, use modifiedContent (disk may have merged content)
+							const review = _getActiveReview?.(file);
+							if (review) {
+								beforeSnapshots.set(file, review.modifiedContent);
+								log.log(`/snapshot: using review.modifiedContent for ${file} (Bash, ${review.modifiedContent.length} chars)`);
+								if (review.mergedApplied) {
+									try {
+										fs.writeFileSync(file, review.modifiedContent, "utf8");
+										review.mergedApplied = false;
+										log.log(`/snapshot: restored modifiedContent to disk for ${file}`);
+									} catch {}
+								}
+							} else {
+								try {
+									const content = fs.readFileSync(file, "utf8");
+									beforeSnapshots.set(file, content);
+									log.log(`/snapshot: stored ${content.length} chars for ${file} (Bash)`);
+								} catch {
+									// File may not exist yet (e.g. touch new file)
+								}
 							}
 						}
 					} else if (data.file) {
-						const content = data.content
-							? Buffer.from(data.content, "base64").toString("utf8")
-							: "";
-						beforeSnapshots.set(data.file, content);
-						log.log(`/snapshot: stored ${content.length} chars for ${data.file}`);
+						// Edit/Write: if active review exists, use modifiedContent
+						// (PreToolUse hook reads from disk which may have merged content)
+						const review = _getActiveReview?.(data.file);
+						if (review) {
+							beforeSnapshots.set(data.file, review.modifiedContent);
+							log.log(`/snapshot: using review.modifiedContent for ${data.file} (${review.modifiedContent.length} chars)`);
+							if (review.mergedApplied) {
+								try {
+									fs.writeFileSync(data.file, review.modifiedContent, "utf8");
+									review.mergedApplied = false;
+									log.log(`/snapshot: restored modifiedContent to disk for ${data.file}`);
+								} catch {}
+							}
+						} else {
+							const content = data.content
+								? Buffer.from(data.content, "base64").toString("utf8")
+								: "";
+							beforeSnapshots.set(data.file, content);
+							log.log(`/snapshot: stored ${content.length} chars for ${data.file}`);
+						}
 					}
 				} catch (err) {
 					log.log(`/snapshot error: ${(err as Error).message}`);
@@ -106,6 +140,28 @@ function createServer(): http.Server {
 					}
 				} catch (err) {
 					log.log(`/changed error: ${(err as Error).message}`);
+				}
+				json(res, { ok: true });
+			});
+			return;
+		}
+
+		// Notification endpoint — show OS notification only when editor is unfocused
+		if (req.method === "POST" && req.url === "/notify") {
+			readBody(req, (body) => {
+				try {
+					const data = JSON.parse(body) as { title?: string; message?: string };
+					const title = data.title || "Claude Code Review";
+					const message = data.message || "Claude Code needs your attention";
+					log.log(`/notify: title="${title}" message="${message}" focused=${vscode.window.state.focused}`);
+					const notifEnabled = vscode.workspace
+						.getConfiguration("claudeCodeReview")
+						.get<boolean>("osNotifications", true);
+					if (notifEnabled && !vscode.window.state.focused) {
+						sendOsNotification(title, message);
+					}
+				} catch (err) {
+					log.log(`/notify error: ${(err as Error).message}`);
 				}
 				json(res, { ok: true });
 			});
@@ -205,6 +261,19 @@ function readBody(req: http.IncomingMessage, cb: (body: string) => void): void {
 	let body = "";
 	req.on("data", (c: Buffer) => (body += c));
 	req.on("end", () => cb(body));
+}
+
+function sendOsNotification(title: string, message: string): void {
+	try {
+		if (process.platform === "darwin") {
+			execSync(`osascript -e 'display notification "${message.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"'`, { timeout: 5000 });
+		} else {
+			execSync(`notify-send "${title.replace(/"/g, '\\"')}" "${message.replace(/"/g, '\\"')}"`, { timeout: 5000 });
+		}
+		log.log(`OS notification sent: "${title}"`);
+	} catch (err) {
+		log.log(`OS notification failed: ${(err as Error).message}`);
+	}
 }
 
 function json(res: http.ServerResponse, data: unknown): void {

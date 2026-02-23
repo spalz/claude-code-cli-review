@@ -20,21 +20,21 @@ vi.mock("../log", () => ({ log: vi.fn() }));
 import { applyDecorations, clearDecorations } from "../decorations";
 import type { IFileReview, Hunk, HunkRange } from "../../types";
 
-function makeEditor() {
+function makeEditor(lineCount = 0) {
 	return {
 		setDecorations: vi.fn(),
-		document: { uri: { fsPath: "/test/file.ts" } },
+		document: { uri: { fsPath: "/test/file.ts" }, lineCount },
 	} as unknown as import("vscode").TextEditor;
 }
 
-function makeReview(hunks: Hunk[], hunkRanges: HunkRange[]): IFileReview {
+function makeReview(hunks: Hunk[], hunkRanges: HunkRange[], lineCount = 0): IFileReview {
 	return {
 		filePath: "/test/file.ts",
 		originalContent: "",
 		modifiedContent: "",
 		changeType: "edit",
 		hunks,
-		mergedLines: [],
+		mergedLines: Array(lineCount).fill(""),
 		hunkRanges,
 		get unresolvedCount() {
 			return hunks.filter((h) => !h.resolved).length;
@@ -71,7 +71,8 @@ describe("applyDecorations", () => {
 		const ranges: HunkRange[] = [
 			{ hunkId: 1, removedStart: 5, removedEnd: 6, addedStart: 6, addedEnd: 8 },
 		];
-		const review = makeReview(hunks, ranges);
+		const review = makeReview(hunks, ranges, 10);
+		editor = makeEditor(10);
 
 		applyDecorations(editor, review);
 
@@ -143,7 +144,8 @@ describe("applyDecorations", () => {
 		const ranges: HunkRange[] = [
 			{ hunkId: 1, removedStart: 3, removedEnd: 5, addedStart: 5, addedEnd: 5 },
 		];
-		const review = makeReview(hunks, ranges);
+		const review = makeReview(hunks, ranges, 7);
+		editor = makeEditor(7);
 
 		applyDecorations(editor, review);
 
@@ -157,7 +159,8 @@ describe("applyDecorations", () => {
 		const ranges: HunkRange[] = [
 			{ hunkId: 1, removedStart: 3, removedEnd: 3, addedStart: 3, addedEnd: 4 },
 		];
-		const review = makeReview(hunks, ranges);
+		const review = makeReview(hunks, ranges, 6);
+		editor = makeEditor(6);
 
 		applyDecorations(editor, review);
 
@@ -191,7 +194,8 @@ describe("applyDecorations", () => {
 			{ hunkId: 1, removedStart: 2, removedEnd: 3, addedStart: 3, addedEnd: 4 },
 			{ hunkId: 2, removedStart: 10, removedEnd: 11, addedStart: 11, addedEnd: 13 },
 		];
-		const review = makeReview(hunks, ranges);
+		const review = makeReview(hunks, ranges, 15);
+		editor = makeEditor(15);
 
 		applyDecorations(editor, review);
 
@@ -210,13 +214,50 @@ describe("applyDecorations", () => {
 			{ hunkId: 1, removedStart: 2, removedEnd: 3, addedStart: 3, addedEnd: 4 },
 			{ hunkId: 2, removedStart: 10, removedEnd: 11, addedStart: 11, addedEnd: 12 },
 		];
-		const review = makeReview(hunks, ranges);
+		const review = makeReview(hunks, ranges, 14);
+		editor = makeEditor(14);
 
 		applyDecorations(editor, review);
 
 		const calls = (editor.setDecorations as ReturnType<typeof vi.fn>).mock.calls;
 		expect(calls[0][1]).toHaveLength(1); // only hunk 2 removed
 		expect(calls[1][1]).toHaveLength(1); // only hunk 2 added
+	});
+});
+
+describe("line-count guard", () => {
+	it("clears decorations when lineCount differs from mergedLines length", () => {
+		const hunks = [makeHunk({ id: 1, removed: ["old"], added: ["new1", "new2"] })];
+		const ranges: HunkRange[] = [
+			{ hunkId: 1, removedStart: 0, removedEnd: 1, addedStart: 1, addedEnd: 3 },
+		];
+		// Editor has 3 lines but review expects 5 merged lines → mismatch
+		const review = makeReview(hunks, ranges, 5);
+		const editor = makeEditor(3);
+
+		applyDecorations(editor, review);
+
+		const calls = (editor.setDecorations as ReturnType<typeof vi.fn>).mock.calls;
+		// Guard should call clearDecorations (3 empty arrays) and return early
+		expect(calls).toHaveLength(3);
+		expect(calls[0][1]).toEqual([]);
+		expect(calls[1][1]).toEqual([]);
+		expect(calls[2][1]).toEqual([]);
+	});
+
+	it("applies decorations normally when lineCount matches mergedLines length", () => {
+		const hunks = [makeHunk({ id: 1, removed: ["old"], added: ["new"] })];
+		const ranges: HunkRange[] = [
+			{ hunkId: 1, removedStart: 0, removedEnd: 1, addedStart: 1, addedEnd: 2 },
+		];
+		const review = makeReview(hunks, ranges, 4);
+		const editor = makeEditor(4);
+
+		applyDecorations(editor, review);
+
+		const calls = (editor.setDecorations as ReturnType<typeof vi.fn>).mock.calls;
+		expect(calls[0][1]).toHaveLength(1); // removed
+		expect(calls[1][1]).toHaveLength(1); // added
 	});
 });
 

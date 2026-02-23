@@ -65,25 +65,6 @@ export class ReviewCodeLensProvider implements vscode.CodeLensProvider {
 			}
 		}
 
-		// "Review next file ›" after last hunk if more files remain
-		const remaining = state.getReviewFiles().filter((f) => state.activeReviews.has(f));
-		if (remaining.length > 1) {
-			const lastRange = unresolvedRanges[unresolvedRanges.length - 1];
-			if (lastRange) {
-				const lastLine = Math.min(
-					(lastRange.addedEnd > 0 ? lastRange.addedEnd : lastRange.removedEnd),
-					document.lineCount - 1,
-				);
-				lenses.push(
-					new vscode.CodeLens(new vscode.Range(lastLine, 0, lastLine, 0), {
-						title: `$(arrow-right) Next file (${remaining.length - 1} remaining)`,
-						tooltip: "Open the next file with unresolved changes",
-						command: "ccr.reviewNextUnresolved",
-					}),
-				);
-			}
-		}
-
 		return lenses;
 	}
 }

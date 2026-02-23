@@ -3,12 +3,35 @@
 	"displayName": "Claude Code with Review",
 	"description": "Claude Code session manager, code review, and statistics — opens in the right sidebar",
 	"version": "8.0.0",
-	"publisher": "local",
-	"icon": "media/claude-icon-color-bg-round.svg",
+	"publisher": "DangerCactus",
+	"icon": "media/icon.png",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/spalz/claude-code-cli-review"
+	},
+	"homepage": "https://github.com/spalz/claude-code-cli-review",
+	"bugs": {
+		"url": "https://github.com/spalz/claude-code-cli-review/issues"
+	},
+	"keywords": [
+		"claude",
+		"ai",
+		"code-review",
+		"diff",
+		"anthropic",
+		"claude-code",
+		"llm"
+	],
+	"galleryBanner": {
+		"color": "#1A1A2E",
+		"theme": "dark"
+	},
 	"engines": {
-		"vscode": "^1.100.0"
+		"vscode": "^1.109.0"
 	},
 	"categories": [
+		"AI",
 		"Other"
 	],
 	"activationEvents": [
@@ -29,7 +52,8 @@
 		"vscode:prepublish": "npm run build:prod",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"test:coverage": "vitest run --coverage"
+		"test:coverage": "vitest run --coverage",
+		"publish:ext": "node scripts/publish.js"
 	},
 	"contributes": {
 		"commands": [
@@ -218,6 +242,51 @@
 						"Use 'happy' wrapper CLI"
 					],
 					"description": "CLI command for Claude sessions",
+					"scope": "window"
+				},
+				"claudeCodeReview.shell": {
+					"type": "string",
+					"default": "auto",
+					"enum": ["auto", "bash", "zsh", "fish", "powershell", "custom"],
+					"enumDescriptions": [
+						"Auto-detect from $SHELL (current behavior)",
+						"/bin/bash",
+						"/bin/zsh",
+						"/usr/bin/fish",
+						"PowerShell (Windows)",
+						"Custom path below"
+					],
+					"description": "Shell used for PTY sessions",
+					"scope": "window"
+				},
+				"claudeCodeReview.shellPath": {
+					"type": "string",
+					"default": "",
+					"description": "Custom shell path (when shell = custom)",
+					"scope": "window"
+				},
+				"claudeCodeReview.loginShell": {
+					"type": "boolean",
+					"default": true,
+					"description": "Use login shell (-l). Disable for minimal environment.",
+					"scope": "window"
+				},
+				"claudeCodeReview.cleanEnvironment": {
+					"type": "boolean",
+					"default": false,
+					"description": "Strip user env, keep only PATH/HOME/USER/LANG/TERM/SHELL/TMPDIR.",
+					"scope": "window"
+				},
+				"claudeCodeReview.osNotifications": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show OS notifications when Claude needs attention and editor is unfocused.",
+					"scope": "window"
+				},
+				"claudeCodeReview.extraEnvVars": {
+					"type": "object",
+					"default": {},
+					"description": "Extra env vars (key-value) added to Claude sessions.",
 					"scope": "window"
 				}
 			}

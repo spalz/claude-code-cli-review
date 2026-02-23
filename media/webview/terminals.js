@@ -97,6 +97,27 @@
 			send("terminal-resize", { sessionId: id, cols: size.cols, rows: size.rows });
 		});
 
+		// Loading overlay — shown until TUI starts
+		var overlay = document.createElement("div");
+		overlay.className = "term-loading-overlay";
+		overlay.innerHTML = ''
+			+ '<div class="sk">'
+			+   '<pre class="sk-logo">'
+			+  '\u2590\u259B\u2588\u2588\u2588\u259C\u258C\n'
+			+  '\u259D\u259C\u2588\u2588\u2588\u2588\u2588\u259B\u2598\n'
+			+  '\u2598\u2598 \u259D\u259D'
+			+   '</pre>'
+			+   '<div class="sk-status">Starting session\u2026</div>'
+			+ '</div>';
+		container.appendChild(overlay);
+		setTimeout(function () {
+			if (overlay.parentElement) {
+				overlay.remove();
+				var e = terminals.get(id);
+				if (e) e.loadingOverlay = null;
+			}
+		}, 15000);
+
 		var entry = {
 			id: id,
 			name: displayName,
@@ -105,6 +126,7 @@
 			fitAddon: fitAddon,
 			container: container,
 			tabEl: tab,
+			loadingOverlay: overlay,
 		};
 		terminals.set(id, entry);
 
@@ -166,7 +188,13 @@
 			var beforeRows = t.term.rows;
 			setTimeout(function () {
 				try {
+					var buf = t.term.buffer.active;
+					var wasAtBottom = buf.viewportY >= buf.baseY;
+					var savedY = buf.viewportY;
 					t.fitAddon.fit();
+					if (!wasAtBottom && savedY > 0) {
+						t.term.scrollToLine(savedY);
+					}
 					if (t.term.cols !== beforeCols || t.term.rows !== beforeRows) {
 						diagLog("resize", "fit", {
 							sid: activeTerminalId,
@@ -349,7 +377,7 @@
 			if (event.type !== "keydown") return true;
 			// Shift+Enter → send same sequence as Option+Enter (newline in Claude CLI)
 			if (event.shiftKey && event.key === "Enter") {
-				send("terminal-input", { sessionId: sessionId, data: "\x1b\r" });
+				send("terminal-input", { sessionId: sessionId, data: "\x1b\n" });
 				return false;
 			}
 			if (event.ctrlKey && event.key === "c") {

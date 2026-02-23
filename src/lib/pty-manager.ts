@@ -10,6 +10,21 @@ import type {
 	PtyExitHandler,
 } from "../types";
 
+const CLEAN_ENV_KEYS = ["PATH", "HOME", "USER", "LANG", "TERM", "SHELL", "TMPDIR", "LOGNAME"];
+
+function resolveShell(setting: string, customPath: string): string {
+	if (setting === "custom" && customPath) return customPath;
+	const isWin = process.platform === "win32";
+	switch (setting) {
+		case "bash": return "/bin/bash";
+		case "zsh": return "/bin/zsh";
+		case "fish": return "/usr/bin/fish";
+		case "powershell": return isWin ? "powershell.exe" : "/usr/bin/pwsh";
+		default: // "auto"
+			return isWin ? "powershell.exe" : process.env.SHELL || "/bin/bash";
+	}
+}
+
 let nodePty: INodePty | null = null;
 
 function loadNodePty(): INodePty {
@@ -48,13 +63,27 @@ class PtySession {
 		this.name = name;
 
 		const pty = loadNodePty();
-		const shell =
-			process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/bash";
+		const config = vscode.workspace.getConfiguration("claudeCodeReview");
+		const shellSetting = config.get<string>("shell", "auto");
+		const shellPath = config.get<string>("shellPath", "");
+		const loginShell = config.get<boolean>("loginShell", true);
+		const cleanEnv = config.get<boolean>("cleanEnvironment", false);
+		const extraVars = config.get<Record<string, string>>("extraEnvVars", {});
 
+		const shell = resolveShell(shellSetting, shellPath);
 		const cmd = command || "claude";
 		log.log(`PTY #${id} spawning: shell=${shell}, cmd=${cmd}, cwd=${workspacePath}`);
 
-		const env: Record<string, string | undefined> = { ...process.env };
+		let env: Record<string, string | undefined>;
+		if (cleanEnv) {
+			env = {};
+			for (const k of CLEAN_ENV_KEYS) {
+				if (process.env[k]) env[k] = process.env[k];
+			}
+		} else {
+			env = { ...process.env };
+		}
+
 		// Critical for embedded xterm.js context
 		env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = "false";
 		env.DISABLE_AUTOUPDATER = "1";
@@ -62,10 +91,24 @@ class PtySession {
 		env.CLAUDE_CODE_DISABLE_TERMINAL_TITLE = "1";
 		env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
 		env.CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL = "1";
+		env.SHELL = shell;
 
-		log.log(`PTY #${id} created: cmd=${cmd}, cwd=${workspacePath}`);
+		// Apply user extra env vars last (highest priority)
+		Object.assign(env, extraVars);
 
-		this.process = pty.spawn(shell, ["-l", "-c", `exec ${cmd}`], {
+		log.log(`PTY #${id} created: cmd=${cmd}, cwd=${workspacePath}, login=${loginShell}, clean=${cleanEnv}`);
+
+		const isFish = shell.includes("fish");
+		let args: string[];
+		if (isFish) {
+			args = loginShell ? ["-l", "-c", cmd] : ["-c", cmd];
+		} else {
+			args = loginShell
+				? ["-l", "-c", `exec ${cmd}`]
+				: ["-c", `exec ${cmd}`];
+		}
+
+		this.process = pty.spawn(shell, args, {
 			name: "xterm-256color",
 			cols: 80,
 			rows: 24,

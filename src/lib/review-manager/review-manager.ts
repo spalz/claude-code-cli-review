@@ -7,6 +7,7 @@ import { saveReviewState } from "../persistence";
 import { clearAllHistories } from "../undo-history";
 import type { ICodeLensProvider, IMainView, ReviewManagerInternal } from "./types";
 import { addFile as addFileImpl } from "./file-addition";
+import { applyContentViaEdit } from "./content-application";
 import { resolveHunk as resolveHunkImpl, resolveAllHunks as resolveAllHunksImpl } from "./hunk-resolution";
 import { navigateHunk as navigateHunkImpl, navigateFile as navigateFileImpl, reviewNextUnresolved as reviewNextUnresolvedImpl, openCurrentOrNext as openCurrentOrNextImpl, openFileForReview as openFileForReviewImpl } from "./navigation";
 import { undoResolve as undoResolveImpl, redoResolve as redoResolveImpl, restoreFromSnapshot as restoreFromSnapshotImpl } from "./undo-redo";
@@ -36,7 +37,22 @@ export class ReviewManager implements vscode.Disposable {
 	}
 
 	// --- File addition ---
-	addFile(absFilePath: string): void { addFileImpl(this.internal, absFilePath); }
+	async addFile(absFilePath: string): Promise<void> { await addFileImpl(this.internal, absFilePath); }
+
+	// --- Content validation ---
+	async ensureMergedContent(filePath: string): Promise<void> {
+		const review = state.activeReviews.get(filePath);
+		if (!review) return;
+		const editor = vscode.window.visibleTextEditors.find(
+			(e) => e.document.uri.fsPath === filePath,
+		);
+		if (!editor) return;
+		const mergedContent = review.mergedLines.join("\n");
+		if (editor.document.getText() !== mergedContent) {
+			log.log(`ensureMergedContent: content mismatch for ${filePath}, reapplying`);
+			await applyContentViaEdit(this.internal, filePath, mergedContent);
+		}
+	}
 
 	// --- Resolve hunks ---
 	async resolveHunk(filePath: string, hunkId: number, accept: boolean): Promise<void> {

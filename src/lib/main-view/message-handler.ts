@@ -4,6 +4,8 @@ import * as fs from "fs";
 import * as path from "path";
 import * as log from "../log";
 import * as state from "../state";
+import { readClaudeSettings, readClaudeSettingsScoped, writeClaudeSetting, writeClaudeRuntimeState } from "../claude-settings";
+import type { SettingsScope } from "../claude-settings";
 import {
 	deleteSession,
 	archiveSession,
@@ -49,12 +51,19 @@ export function handleWebviewMessage(
 			ctx.sessionMgr.restoreSessions();
 			// Refresh review state in case restore() completed before webview was ready
 			state.refreshAll();
+			const termConfig = vscode.workspace.getConfiguration("claudeCodeReview");
 			ctx.postMessage({
 				type: "settings-init",
-				cliCommand: vscode.workspace
-					.getConfiguration("claudeCodeReview")
-					.get<string>("cliCommand", "claude"),
+				cliCommand: termConfig.get<string>("cliCommand", "claude"),
 				keybindings: ctx.getKeybindings(),
+				claudeSettings: readClaudeSettings(ctx.wp),
+				terminalSettings: {
+					shell: termConfig.get<string>("shell", "auto"),
+					shellPath: termConfig.get<string>("shellPath", ""),
+					loginShell: termConfig.get<boolean>("loginShell", true),
+					cleanEnvironment: termConfig.get<boolean>("cleanEnvironment", false),
+					osNotifications: termConfig.get<boolean>("osNotifications", true),
+				},
 			});
 			if (pendingHookStatus) {
 				log.log(`sending pending hook status: ${pendingHookStatus}`);
@@ -306,6 +315,45 @@ export function handleWebviewMessage(
 			ctx.sessionMgr.persistActiveSession(claudeId);
 			break;
 		}
+
+		case "set-claude-setting": {
+			const scope = (msg.scope as SettingsScope) || "global";
+			log.log(`set-claude-setting [${scope}]: ${msg.key as string} = ${JSON.stringify(msg.value)}`);
+			writeClaudeSetting(msg.key as string, msg.value, scope, ctx.wp);
+			// Send back updated settings so UI shows effective values
+			ctx.postMessage({
+				type: "claude-settings-update",
+				claudeSettings: readClaudeSettings(ctx.wp),
+			});
+			break;
+		}
+
+		case "set-claude-runtime": {
+			log.log(`set-claude-runtime: ${msg.key as string} = ${JSON.stringify(msg.value)}`);
+			writeClaudeRuntimeState(msg.key as string, msg.value);
+			ctx.postMessage({
+				type: "claude-settings-update",
+				claudeSettings: readClaudeSettings(ctx.wp),
+			});
+			break;
+		}
+
+		case "get-claude-settings-scoped": {
+			const reqScope = (msg.scope as SettingsScope) || "global";
+			ctx.postMessage({
+				type: "claude-settings-scoped",
+				scope: reqScope,
+				settings: readClaudeSettingsScoped(reqScope, ctx.wp),
+			});
+			break;
+		}
+
+		case "set-terminal-setting":
+			log.log(`set-terminal-setting: ${msg.key as string} = ${JSON.stringify(msg.value)}`);
+			vscode.workspace
+				.getConfiguration("claudeCodeReview")
+				.update(msg.key as string, msg.value, true);
+			break;
 
 		case "set-cli-command":
 			log.log(`set-cli-command: ${msg.value as string}`);

@@ -57,9 +57,14 @@ function setupTrackedFile(original: string, modified: string) {
 	mockFs.readFileSync.mockReturnValue(modified);
 	mockExecSync.mockImplementation((cmd: string) => {
 		if (cmd.includes("git ls-files")) return "";
+		if (cmd.includes("git show HEAD")) return original;
+		if (cmd.includes("git diff --no-index")) {
+			const err = new Error("diff") as Error & { stdout: string };
+			err.stdout = `@@ -1,1 +1,1 @@\n-${original}\n+${modified}`;
+			throw err;
+		}
 		if (cmd.includes("git diff HEAD"))
 			return `@@ -1,1 +1,1 @@\n-${original}\n+${modified}`;
-		if (cmd.includes("git show HEAD")) return original;
 		return "";
 	});
 }
@@ -131,9 +136,14 @@ describe("re-edit same file", () => {
 		mockFs.readFileSync.mockReturnValue("second-edit");
 		mockExecSync.mockImplementation((cmd: string) => {
 			if (cmd.includes("git ls-files")) return "";
+			if (cmd.includes("git show HEAD")) return "original";
+			if (cmd.includes("git diff --no-index")) {
+				const err = new Error("diff") as Error & { stdout: string };
+				err.stdout = "@@ -1,1 +1,1 @@\n-original\n+second-edit";
+				throw err;
+			}
 			if (cmd.includes("git diff HEAD"))
 				return "@@ -1,1 +1,1 @@\n-original\n+second-edit";
-			if (cmd.includes("git show HEAD")) return "original";
 			return "";
 		});
 		mgr.addFile("/ws/file.ts");

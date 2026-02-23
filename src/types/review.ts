@@ -33,6 +33,7 @@ export interface IFileReview {
 	hunks: Hunk[];
 	mergedLines: string[];
 	hunkRanges: HunkRange[];
+	mergedApplied?: boolean;
 	readonly unresolvedCount: number;
 	readonly isFullyResolved: boolean;
 }

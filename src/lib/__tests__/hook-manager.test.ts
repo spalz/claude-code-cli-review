@@ -69,11 +69,13 @@ describe("hook scripts", () => {
 		expect(script).toContain("'tool':'Bash'");
 	});
 
-	it("getNotifyHookScript contains version and osascript", () => {
+	it("getNotifyHookScript posts to /notify endpoint", () => {
 		const script = getNotifyHookScript();
 		expect(script).toContain("v8.0");
-		expect(script).toContain("osascript");
-		expect(script).toContain("notify-send");
+		expect(script).toContain("127.0.0.1:27182/notify");
+		expect(script).toContain("curl");
+		expect(script).not.toContain("osascript");
+		expect(script).not.toContain("notify-send");
 	});
 });
 
@@ -248,19 +250,19 @@ describe("checkAndPrompt", () => {
 		expect(cb).toHaveBeenCalledWith("installed");
 	});
 
-	it("returns 'missing' when hooks don't exist", () => {
+	it("auto-installs when hooks don't exist", () => {
 		mockFs.existsSync.mockReturnValue(false);
 		mockFs.readFileSync.mockImplementation(() => { throw new Error("ENOENT"); });
 		const cb = vi.fn();
-		expect(checkAndPrompt("/ws", cb)).toBe("missing");
-		expect(cb).toHaveBeenCalledWith("missing");
+		expect(checkAndPrompt("/ws", cb)).toBe("installed");
+		expect(cb).toHaveBeenCalledWith("installed");
 	});
 
-	it("returns 'outdated' when hook files exist but are not current", () => {
+	it("auto-installs when hooks are outdated", () => {
 		mockFs.existsSync.mockReturnValue(true);
 		mockFs.readFileSync.mockReturnValue("old content");
 		const cb = vi.fn();
-		expect(checkAndPrompt("/ws", cb)).toBe("outdated");
-		expect(cb).toHaveBeenCalledWith("outdated");
+		expect(checkAndPrompt("/ws", cb)).toBe("installed");
+		expect(cb).toHaveBeenCalledWith("installed");
 	});
 });

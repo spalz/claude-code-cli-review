@@ -36,11 +36,13 @@ export function initHistory(fsPath: string): void {
 	}
 }
 
-export function pushUndoState(fsPath: string, review: Snapshotable): void {
-	const hist = histories.get(fsPath);
-	if (!hist) return;
+export function pushUndoState(fsPath: string, review: Snapshotable, preserveRedo = false): void {
+	if (!histories.has(fsPath)) {
+		initHistory(fsPath);
+	}
+	const hist = histories.get(fsPath)!;
 	hist.undoStack.push(deepSnapshot(review));
-	hist.redoStack.length = 0; // clear redo on new action
+	if (!preserveRedo) hist.redoStack.length = 0; // clear redo on new action
 	const unresolvedCount = review.hunks.filter((h) => !h.resolved).length;
 	log.log(`undo-history: push undo, stack=${hist.undoStack.length}, hunks=[${hunkSummary(review.hunks)}] for ${fsPath}`);
 	updateContextKeys();

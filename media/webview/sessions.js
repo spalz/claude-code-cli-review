@@ -89,12 +89,7 @@
 	function resumeSession(claudeId, isArchived) {
 		var item = document.querySelector('.session-item[data-sid="' + claudeId + '"]');
 		if (item) item.style.opacity = "0.5";
-		var el = document.getElementById("sessionsList");
-		var loader = document.createElement("div");
-		loader.className = "loading-bar";
-		loader.id = "sessionLoader";
-		el.parentElement.insertBefore(loader, el);
-		diagLog("loading", "bar-shown", { reason: "resume", claudeId: claudeId });
+		showSessionLoader("resume");
 		if (isArchived) {
 			send("unarchive-session", { sessionId: claudeId });
 		}
@@ -278,6 +273,20 @@
 	document.getElementById("btnRefresh").addEventListener("click", function () {
 		send("refresh-sessions");
 	});
+	function showSessionLoader(reason) {
+		var existing = document.getElementById("sessionLoader");
+		if (existing) return;
+		var parent = window.viewMode === "terminals"
+			? document.getElementById("terminalView")
+			: document.getElementById("sessionsView");
+		if (!parent) return;
+		var loader = document.createElement("div");
+		loader.className = "loading-bar";
+		loader.id = "sessionLoader";
+		parent.insertBefore(loader, parent.firstChild);
+		diagLog("loading", "bar-shown", { reason: reason, viewMode: window.viewMode });
+	}
+
 	document.getElementById("btnNewChat").addEventListener("click", function () {
 		send("new-claude-session");
 	});

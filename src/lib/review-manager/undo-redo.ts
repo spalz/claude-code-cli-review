@@ -2,7 +2,7 @@
 import * as vscode from "vscode";
 import * as log from "../log";
 import * as state from "../state";
-import { applyDecorations } from "../decorations";
+
 import { popUndoState, pushRedoState, popRedoState, pushUndoState } from "../undo-history";
 import { FileReview } from "../review";
 import { applyContentViaEdit } from "./content-application";
@@ -35,9 +35,15 @@ export async function undoResolve(mgr: ReviewManagerInternal): Promise<void> {
 		pushRedoState(fsPath, finalizedSnapshot);
 	}
 
-	log.log(`ReviewManager.undoResolve: restoring ${fsPath}, unresolved=${snapshot.hunks.filter((h) => !h.resolved).length}`);
+	const snapshotHunkState = snapshot.hunks.map((h) => `${h.id}:${h.resolved ? (h.accepted ? "A" : "R") : "U"}`).join(",");
+	log.log(`ReviewManager.undoResolve: restoring ${fsPath}, unresolved=${snapshot.hunks.filter((h) => !h.resolved).length}, snapshot hunks=[${snapshotHunkState}], mergedLines=${snapshot.mergedLines.length}`);
 	restoreFromSnapshot(mgr, fsPath, snapshot);
-	await applyContentViaEdit(mgr, fsPath, snapshot.mergedLines.join("\n"));
+	// Reveal first unresolved hunk from the restored snapshot
+	const firstRange = snapshot.hunkRanges[0];
+	const revealLine = firstRange
+		? (firstRange.removedStart < firstRange.removedEnd ? firstRange.removedStart : firstRange.addedStart)
+		: undefined;
+	await applyContentViaEdit(mgr, fsPath, snapshot.mergedLines.join("\n"), revealLine);
 }
 
 export async function redoResolve(mgr: ReviewManagerInternal): Promise<void> {
@@ -52,12 +58,14 @@ export async function redoResolve(mgr: ReviewManagerInternal): Promise<void> {
 		return;
 	}
 
-	// Push current to undo
+	// Push current to undo (preserve redo stack — we're inside a redo operation)
 	if (currentReview) {
-		pushUndoState(fsPath, currentReview);
+		pushUndoState(fsPath, currentReview, true);
 	}
 
 	const allResolved = snapshot.hunks.every((h) => h.resolved);
+	const redoHunkState = snapshot.hunks.map((h) => `${h.id}:${h.resolved ? (h.accepted ? "A" : "R") : "U"}`).join(",");
+	log.log(`ReviewManager.redoResolve: snapshot hunks=[${redoHunkState}], allResolved=${allResolved}, mergedLines=${snapshot.mergedLines.length}`);
 	if (allResolved) {
 		log.log(`ReviewManager.redoResolve: re-finalizing ${fsPath}`);
 		restoreFromSnapshot(mgr, fsPath, snapshot);
@@ -69,7 +77,12 @@ export async function redoResolve(mgr: ReviewManagerInternal): Promise<void> {
 	} else {
 		log.log(`ReviewManager.redoResolve: restoring ${fsPath}, unresolved=${snapshot.hunks.filter((h) => !h.resolved).length}`);
 		restoreFromSnapshot(mgr, fsPath, snapshot);
-		await applyContentViaEdit(mgr, fsPath, snapshot.mergedLines.join("\n"));
+		// Reveal first unresolved hunk from the restored snapshot
+		const firstRange = snapshot.hunkRanges[0];
+		const revealLine = firstRange
+			? (firstRange.removedStart < firstRange.removedEnd ? firstRange.removedStart : firstRange.addedStart)
+			: undefined;
+		await applyContentViaEdit(mgr, fsPath, snapshot.mergedLines.join("\n"), revealLine);
 	}
 }
 
@@ -101,10 +114,6 @@ export function restoreFromSnapshot(mgr: ReviewManagerInternal, fsPath: string, 
 	const rangeDetail = (review as FileReview).hunkRanges.map((r) => `h${r.hunkId}@${r.removedStart}-${r.removedEnd}/${r.addedStart}-${r.addedEnd}`).join(", ");
 	log.log(`ReviewManager.restoreFromSnapshot: hunks=[${hunkDetail}], ranges=[${rangeDetail}]`);
 
-	const editor = vscode.window.visibleTextEditors.find(
-		(e) => e.document.uri.fsPath === fsPath,
-	);
-	if (editor) applyDecorations(editor, review);
 	mgr.syncState();
 	mgr.refreshUI();
 	mgr.scheduleSave();

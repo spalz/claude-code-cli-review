@@ -1,9 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseUnifiedDiff } from "../diff";
 import { makeUnifiedDiff } from "./helpers";
 
-// computeDiff requires fs/child_process — tested separately with mocks
 vi.mock("../log", () => ({ log: vi.fn() }));
+
+// Hoisted mocks for fs and child_process — used by computeDiff tests.
+// parseUnifiedDiff is a pure function and doesn't use these.
+const mockFs = vi.hoisted(() => ({
+	writeFileSync: vi.fn(),
+	unlinkSync: vi.fn(),
+}));
+vi.mock("fs", () => mockFs);
+
+const mockExecSync = vi.hoisted(() => vi.fn());
+vi.mock("child_process", () => ({ execSync: mockExecSync }));
+
+import { parseUnifiedDiff, computeDiff } from "../diff";
 
 describe("parseUnifiedDiff", () => {
 	it("parses a single hunk with removals and additions", () => {
@@ -183,31 +194,89 @@ describe("parseUnifiedDiff", () => {
 
 describe("computeDiff", () => {
 	beforeEach(() => {
-		vi.restoreAllMocks();
+		vi.clearAllMocks();
+		// Default: git diff --no-index returns a simple diff
+		mockExecSync.mockImplementation((cmd: string) => {
+			if (typeof cmd === "string" && cmd.includes("git diff --no-index")) {
+				const err = new Error("diff") as Error & { stdout: string };
+				err.stdout = "@@ -1,1 +1,1 @@\n-original\n+modified";
+				throw err;
+			}
+			return "";
+		});
 	});
 
-	it("returns single create hunk for untracked new file", async () => {
-		vi.doMock("child_process", () => ({
-			execSync: vi.fn(() => { throw new Error("not tracked"); }),
-		}));
-		const { computeDiff } = await import("../diff");
+	it("returns single create hunk for untracked new file", () => {
 		const hunks = computeDiff("", "line1\nline2", "/ws/file.ts", "/ws");
 		expect(hunks).toHaveLength(1);
 		expect(hunks[0].added).toEqual(["line1", "line2"]);
 		expect(hunks[0].removed).toEqual([]);
 	});
 
-	it("returns empty array when both contents are empty and untracked", async () => {
-		vi.doMock("child_process", () => ({
-			execSync: vi.fn(() => { throw new Error("not tracked"); }),
-		}));
-		vi.doMock("fs", () => ({
-			writeFileSync: vi.fn(),
-			unlinkSync: vi.fn(),
-		}));
-		const { computeDiff } = await import("../diff");
+	it("returns empty array when contents are identical", () => {
+		// git diff --no-index with identical content returns empty string
+		mockExecSync.mockReturnValue("");
 		const hunks = computeDiff("same", "same", "/ws/file.ts", "/ws");
-		// git diff --no-index with identical content returns empty
 		expect(hunks).toEqual([]);
+	});
+
+	it("uses diffTempFiles (git diff --no-index) instead of git diff HEAD", () => {
+		mockExecSync.mockImplementation((cmd: string) => {
+			if (typeof cmd === "string" && cmd.includes("git diff --no-index")) {
+				const err = new Error("diff") as Error & { stdout: string };
+				err.stdout = "@@ -1,1 +1,1 @@\n-old line\n+new line";
+				throw err;
+			}
+			return "";
+		});
+		const hunks = computeDiff("old line", "new line", "/ws/file.ts", "/ws");
+		expect(hunks).toHaveLength(1);
+		expect(hunks[0].removed).toEqual(["old line"]);
+		expect(hunks[0].added).toEqual(["new line"]);
+		// Verify git diff HEAD was NOT called
+		const calls = mockExecSync.mock.calls.map(c => c[0] as string);
+		expect(calls.some(c => c.includes("git diff HEAD"))).toBe(false);
+		expect(calls.some(c => c.includes("git diff --no-index"))).toBe(true);
+	});
+
+	it("normalizes trailing newlines to prevent spurious last-line diffs", () => {
+		const writtenContents: string[] = [];
+		mockFs.writeFileSync.mockImplementation((_path: string, content: string) => {
+			writtenContents.push(content);
+		});
+		mockExecSync.mockImplementation((cmd: string) => {
+			if (typeof cmd === "string" && cmd.includes("git diff --no-index")) {
+				const err = new Error("diff") as Error & { stdout: string };
+				err.stdout = "@@ -3,3 +3,0 @@\n-\n-// NOTE\n-// see";
+				throw err;
+			}
+			return "";
+		});
+
+		// Original ends with \n, modified does NOT — normalization should add \n
+		const original = "line1\nline2\nline3\n";
+		const modified = "line1\nline2\nline3";  // no trailing newline
+		computeDiff(original, modified, "/ws/file.ts", "/ws");
+
+		// Both temp files should have trailing newline (normalization)
+		expect(writtenContents.length).toBeGreaterThanOrEqual(2);
+		expect(writtenContents[0].endsWith("\n")).toBe(true);
+		expect(writtenContents[1].endsWith("\n")).toBe(true);
+	});
+
+	it("does not double-add newline when content already ends with \\n", () => {
+		const writtenContents: string[] = [];
+		mockFs.writeFileSync.mockImplementation((_path: string, content: string) => {
+			writtenContents.push(content);
+		});
+		mockExecSync.mockReturnValue("");
+
+		const original = "line1\nline2\n";
+		const modified = "line1\nline2\n";
+		computeDiff(original, modified, "/ws/file.ts", "/ws");
+
+		// Should NOT have double newlines
+		expect(writtenContents[0]).toBe("line1\nline2\n");
+		expect(writtenContents[1]).toBe("line1\nline2\n");
 	});
 });

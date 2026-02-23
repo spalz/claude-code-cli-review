@@ -4,11 +4,11 @@ import * as fs from "fs";
 import * as log from "../log";
 import * as state from "../state";
 import { buildFinalContent, rebuildMerged } from "../review";
-import { clearDecorations } from "../decorations";
+import { applyDecorations, clearDecorations } from "../decorations";
 import { pushUndoState } from "../undo-history";
 import { clearReviewState } from "../persistence";
 import { FileReview } from "../review";
-import { applyContentViaEdit } from "./content-application";
+import { applyContentViaEdit, applyTargetedHunkEdit } from "./content-application";
 import type { ReviewManagerInternal } from "./types";
 
 export async function resolveHunk(
@@ -28,17 +28,68 @@ export async function resolveHunk(
 
 	hunk.resolved = true;
 	hunk.accepted = accept;
-	log.log(`ReviewManager.resolveHunk: file=${filePath}, hunkId=${hunkId}, accept=${accept}, remaining=${review.unresolvedCount}`);
+	const postHunkState = review.hunks.map((h) => `${h.id}:${h.resolved ? (h.accepted ? "A" : "R") : "U"}`).join(",");
+	log.log(`ReviewManager.resolveHunk: file=${filePath}, hunkId=${hunkId}, accept=${accept}, remaining=${review.unresolvedCount}, hunks=[${postHunkState}]`);
 
 	if (review.isFullyResolved) {
+		log.log(`ReviewManager.resolveHunk: all hunks resolved, finalizing ${filePath}`);
 		await finalizeFile(mgr, filePath);
 	} else {
+		// Find the hunk range BEFORE rebuilding merged (ranges refer to current buffer)
+		const resolvedRange = review.hunkRanges.find((r) => r.hunkId === hunkId);
+		// Capture pre-rebuild content for buffer validation
+		const preMergedContent = review.mergedLines.join("\n");
+		log.log(`ReviewManager.resolveHunk: pre-rebuild mergedLines=${review.mergedLines.length}, ranges=${review.hunkRanges.length}`);
+		if (resolvedRange) {
+			log.log(`ReviewManager.resolveHunk: resolvedRange hunk${resolvedRange.hunkId} removed=${resolvedRange.removedStart}-${resolvedRange.removedEnd} added=${resolvedRange.addedStart}-${resolvedRange.addedEnd}`);
+		}
+
 		rebuildMerged(review as FileReview);
 		const newCount = review.hunkRanges.length;
+		log.log(`ReviewManager.resolveHunk: post-rebuild mergedLines=${review.mergedLines.length}, ranges=${newCount}`);
 		if (mgr.currentHunkIndex >= newCount) {
 			mgr.currentHunkIndex = Math.max(0, newCount - 1);
 		}
-		await applyContentViaEdit(mgr, filePath, review.mergedLines.join("\n"));
+		// Reveal the next unresolved hunk to prevent scroll jumping
+		const nextRange = review.hunkRanges[mgr.currentHunkIndex];
+		const revealLine = nextRange
+			? (nextRange.removedStart < nextRange.removedEnd ? nextRange.removedStart : nextRange.addedStart)
+			: undefined;
+
+		// Try targeted edit: delete only the resolved hunk's lines (no full-buffer replace)
+		let applied = false;
+		const editor = vscode.window.visibleTextEditors.find(
+			(e) => e.document.uri.fsPath === filePath,
+		);
+		// Validate buffer matches pre-rebuild content; if diverged (e.g. formatOnSave), skip targeted edit
+		const bufferDiverged = editor && editor.document.getText() !== preMergedContent;
+		if (bufferDiverged) {
+			log.log(`resolveHunk: buffer diverged from expected pre-merge content (bufferLen=${editor!.document.getText().length}, expectedLen=${preMergedContent.length}), using full replace`);
+		}
+		if (!editor) {
+			log.log(`resolveHunk: no visible editor for ${filePath}, will use applyContentViaEdit`);
+		}
+		if (resolvedRange && !bufferDiverged) {
+			const deleteStart = accept ? resolvedRange.removedStart : resolvedRange.addedStart;
+			const deleteEnd = accept ? resolvedRange.removedEnd : resolvedRange.addedEnd;
+			log.log(`resolveHunk: targeted edit deleteStart=${deleteStart}, deleteEnd=${deleteEnd}, accept=${accept}`);
+			if (deleteStart < deleteEnd) {
+				applied = await applyTargetedHunkEdit(mgr, filePath, deleteStart, deleteEnd, revealLine);
+				log.log(`resolveHunk: targeted edit result=${applied}`);
+			} else {
+				// No lines to delete (pure addition accepted / pure deletion rejected).
+				log.log(`resolveHunk: no lines to delete (pure ${accept ? "addition" : "deletion"}), decorations only`);
+				if (editor) applyDecorations(editor, review);
+				mgr.syncState();
+				mgr.refreshUI();
+				applied = true;
+			}
+		}
+		// Fallback: full-buffer replace (e.g. no editor open, or targeted edit failed)
+		if (!applied) {
+			log.log(`resolveHunk: using full-buffer replace fallback for ${filePath}`);
+			await applyContentViaEdit(mgr, filePath, review.mergedLines.join("\n"), revealLine);
+		}
 	}
 	mgr.scheduleSave();
 }

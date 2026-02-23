@@ -103,7 +103,7 @@
 		// State B: review exists but user not in a review file
 		if (!activeEditorInReview) {
 			toolbar.innerHTML =
-				'<button class="toolbar-btn-text" data-action="review-next-file">' +
+				'<button class="toolbar-btn-text warning" data-action="review-next-file">' +
 				"\u25B6 Review next file (" +
 				remaining +
 				"/" +
@@ -124,7 +124,7 @@
 			'<span class="toolbar-label">' +
 			(currentHunkIndex + 1) +
 			"/" +
-			totalHunks +
+			unresolvedHunks +
 			"</span>";
 		html +=
 			'<button class="toolbar-btn" data-action="next-hunk" title="Next change (\u2318])">\u25BC</button>';

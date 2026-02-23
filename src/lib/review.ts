@@ -9,6 +9,7 @@ import * as state from "./state";
 export class FileReview implements IFileReview {
 	mergedLines: string[] = [];
 	hunkRanges: HunkRange[] = [];
+	mergedApplied = false;
 	changeType: ChangeType;
 
 	constructor(

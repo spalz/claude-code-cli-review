@@ -1,5 +1,6 @@
 // Editor decorations for inline diff rendering (buttons via CodeLens)
 import * as vscode from "vscode";
+import * as log from "./log";
 import type { IFileReview } from "../types";
 
 const decoAdded = vscode.window.createTextEditorDecorationType({
@@ -31,6 +32,13 @@ const decoSeparator = vscode.window.createTextEditorDecorationType({
 });
 
 export function applyDecorations(editor: vscode.TextEditor, review: IFileReview): void {
+	// Safety net: if editor content doesn't match merged content, decorations would be wrong
+	if (editor.document.lineCount !== review.mergedLines.length) {
+		log.log(`applyDecorations: lineCount mismatch for ${editor.document.uri.fsPath}: editor=${editor.document.lineCount}, merged=${review.mergedLines.length}`);
+		clearDecorations(editor);
+		return;
+	}
+
 	const rm: vscode.Range[] = [];
 	const ad: vscode.Range[] = [];
 	const sep: vscode.Range[] = [];

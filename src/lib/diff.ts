@@ -8,55 +8,46 @@ import type { Hunk } from "../types";
 export function computeDiff(
 	originalContent: string,
 	modifiedContent: string,
-	filePath: string,
-	workspacePath: string,
+	_filePath: string,
+	_workspacePath: string,
 ): Hunk[] {
-	const relPath = path.relative(workspacePath, filePath);
-	let diffOutput = "";
-
-	try {
-		execSync(`git ls-files --error-unmatch "${relPath}"`, {
-			cwd: workspacePath,
-			encoding: "utf8",
-			timeout: 3000,
-			stdio: "pipe",
-		});
-		diffOutput = execSync(`git diff HEAD -- "${relPath}"`, {
-			cwd: workspacePath,
-			encoding: "utf8",
-			timeout: 5000,
-			stdio: "pipe",
-		});
-	} catch {
-		if (!originalContent && modifiedContent) {
-			const lines = modifiedContent.split("\n");
-			return [
-				{
-					id: 0,
-					origStart: 1,
-					origCount: 0,
-					modStart: 1,
-					modCount: lines.length,
-					removed: [],
-					added: lines,
-					resolved: false,
-					accepted: false,
-				},
-			];
-		}
-		diffOutput = diffTempFiles(originalContent, modifiedContent);
+	// New file creation: no original content, everything is added
+	if (!originalContent && modifiedContent) {
+		const lines = modifiedContent.split("\n");
+		return [
+			{
+				id: 0,
+				origStart: 1,
+				origCount: 0,
+				modStart: 1,
+				modCount: lines.length,
+				removed: [],
+				added: lines,
+				resolved: false,
+				accepted: false,
+			},
+		];
 	}
 
+	// Always use diffTempFiles with the provided content (from snapshot or git show HEAD).
+	// This is more accurate than `git diff HEAD` which:
+	// 1. Includes prior uncommitted changes (not just Claude's edit)
+	// 2. Produces trailing-newline artifacts when file's final \n changes
+	const diffOutput = diffTempFiles(originalContent, modifiedContent);
 	if (!diffOutput) return [];
 	return parseUnifiedDiff(diffOutput);
 }
 
 function diffTempFiles(original: string, modified: string): string {
+	// Normalize trailing newlines so the last unchanged line isn't treated as changed
+	const normOrig = original && !original.endsWith("\n") ? original + "\n" : original;
+	const normMod = modified && !modified.endsWith("\n") ? modified + "\n" : modified;
+
 	const tmpOrig = path.join(os.tmpdir(), `dp-orig-${Date.now()}`);
 	const tmpMod = path.join(os.tmpdir(), `dp-mod-${Date.now()}`);
 	try {
-		fs.writeFileSync(tmpOrig, original, "utf8");
-		fs.writeFileSync(tmpMod, modified, "utf8");
+		fs.writeFileSync(tmpOrig, normOrig, "utf8");
+		fs.writeFileSync(tmpMod, normMod, "utf8");
 		try {
 			return execSync(`git diff --no-index -- "${tmpOrig}" "${tmpMod}"`, {
 				encoding: "utf8",

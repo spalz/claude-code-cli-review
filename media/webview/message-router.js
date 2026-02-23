@@ -83,9 +83,29 @@
 			case "terminal-output": {
 				var t = getTerminals().get(msg.sessionId);
 				if (t) {
+					if (t.loadingOverlay) {
+						// Check if TUI is starting (alternate screen / cursor ops)
+						if (/\x1b\[\??(25|1049|2004)|(\x1b\[H\x1b\[2J)/.test(msg.data)) {
+							t.loadingOverlay.remove();
+							t.loadingOverlay = null;
+							t.term.write(msg.data);
+						} else {
+							// Pre-TUI text — show in skeleton status, don't write to terminal
+							var plain = msg.data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/[\x00-\x1f]/g, " ").trim();
+							if (plain) {
+								var statusEl = t.loadingOverlay.querySelector(".sk-status");
+								if (statusEl) statusEl.textContent = plain.slice(0, 80);
+							}
+						}
+						break;
+					}
 					var before = getTermBufferState(t);
+					var buf = t.term.buffer.active;
+					var wasAtBottom = buf.viewportY >= buf.baseY;
 					t.term.write(msg.data);
-					t.term.scrollToBottom();
+					if (wasAtBottom) {
+						t.term.scrollToBottom();
+					}
 					var after = getTermBufferState(t);
 					diagLogThrottled("output", "write+scrollToBottom", {
 						sid: msg.sessionId, len: msg.data.length,
@@ -177,6 +197,18 @@
 				}
 				if (msg.keybindings) {
 					updateShortcuts(msg.keybindings);
+				}
+				if (msg.claudeSettings) {
+					updateClaudeSettings(msg.claudeSettings);
+				}
+				if (msg.terminalSettings) {
+					updateTerminalSettings(msg.terminalSettings);
+				}
+				break;
+
+			case "claude-settings-update":
+				if (msg.claudeSettings) {
+					onClaudeSettingsUpdate(msg.claudeSettings);
 				}
 				break;
 

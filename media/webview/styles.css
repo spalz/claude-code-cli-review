@@ -139,6 +139,11 @@ body {
 	border-radius: 50%;
 	background: #dc3545;
 	pointer-events: none;
+	animation: badge-pulse 1.5s ease-in-out infinite;
+}
+@keyframes badge-pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.2; }
 }
 #headerTerminalMode > .header-icon:first-child {
 	flex-shrink: 0;
@@ -196,7 +201,7 @@ body {
 	color: var(--fg);
 	cursor: pointer;
 	padding: 2px 4px;
-	border-radius: 3px;
+	border-radius: 2px;
 	opacity: 0.7;
 	display: flex;
 	align-items: center;
@@ -270,6 +275,13 @@ body {
 	color: #dc3545;
 	opacity: 1;
 	background: var(--red);
+}
+.toolbar-btn-text.warning {
+	color: #e5a200;
+	border-color: rgba(229, 162, 0, 0.4);
+}
+.toolbar-btn-text.warning:hover {
+	background: rgba(229, 162, 0, 0.15);
 }
 .toolbar-btn-text.accent {
 	background: var(--accent);
@@ -459,6 +471,47 @@ body {
 		transform: scaleX(0.3);
 		transform-origin: right;
 	}
+}
+
+/* Loading overlay — covers term-container (absolute) */
+.term-loading-overlay {
+	position: absolute;
+	top: 0; left: 0; right: 0; bottom: 0;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--vscode-sideBar-background, #1e1e1e);
+}
+.sk {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 12px;
+}
+.sk-logo {
+	font-size: 18px;
+	line-height: 1;
+	font-family: 'Menlo','Monaco','Courier New', monospace;
+	color: var(--vscode-terminal-ansiRed, #c9453a);
+	opacity: 0.5;
+	text-align: center;
+	margin: 0;
+	min-width: 120px;
+	animation: sk-pulse 2s ease-in-out infinite;
+}
+@keyframes sk-pulse {
+	0%, 100% { opacity: 0.3; }
+	50% { opacity: 0.6; }
+}
+.sk-status {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground, #888);
+	text-align: center;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 200px;
 }
 
 /* Terminal tabs */
@@ -680,6 +733,94 @@ body {
 .shortcut-row .desc {
 	opacity: 0.7;
 	flex: 1;
+}
+
+/* ===== SCOPE TOGGLE ===== */
+.scope-toggle {
+	display: flex;
+	gap: 1px;
+	background: rgba(128, 128, 128, 0.15);
+	border-radius: 4px;
+	padding: 1px;
+}
+.scope-btn {
+	border: none;
+	background: transparent;
+	color: var(--fg);
+	font-size: 10px;
+	padding: 2px 7px;
+	cursor: pointer;
+	border-radius: 3px;
+	opacity: 0.5;
+	font-family: inherit;
+	text-transform: none;
+	letter-spacing: 0;
+}
+.scope-btn:hover {
+	opacity: 0.8;
+}
+.scope-btn.active {
+	background: var(--accent);
+	color: var(--accent-fg);
+	opacity: 1;
+}
+.settings-row.readonly {
+	opacity: 0.6;
+}
+
+/* ===== TOGGLE SWITCH ===== */
+.toggle {
+	position: relative;
+	display: inline-block;
+	width: 34px;
+	height: 18px;
+	flex-shrink: 0;
+	cursor: pointer;
+}
+.toggle input {
+	opacity: 0;
+	width: 0;
+	height: 0;
+}
+.toggle-slider {
+	position: absolute;
+	inset: 0;
+	background: rgba(128, 128, 128, 0.3);
+	border-radius: 9px;
+	transition: background 0.2s;
+}
+.toggle-slider::before {
+	content: "";
+	position: absolute;
+	left: 2px;
+	top: 2px;
+	width: 14px;
+	height: 14px;
+	background: var(--fg);
+	border-radius: 50%;
+	transition: transform 0.2s;
+}
+.toggle input:checked + .toggle-slider {
+	background: var(--accent);
+}
+.toggle input:checked + .toggle-slider::before {
+	transform: translateX(16px);
+}
+
+/* ===== SETTINGS TEXT INPUT ===== */
+.settings-text-input {
+	background: var(--vscode-input-background, #3c3c3c);
+	color: var(--fg);
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	padding: 4px 8px;
+	font-size: 12px;
+	font-family: inherit;
+	outline: none;
+	width: 140px;
+}
+.settings-text-input:focus {
+	border-color: var(--accent);
 }
 
 /* ===== CONFIRMATION DIALOG ===== */

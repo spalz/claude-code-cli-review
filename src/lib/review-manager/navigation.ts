@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as log from "../log";
 import * as state from "../state";
 import { applyDecorations } from "../decorations";
+import { FileReview } from "../review";
 import { initHistory, setApplyingEdit } from "../undo-history";
 import type { ReviewManagerInternal } from "./types";
 
@@ -37,14 +38,21 @@ export async function navigateFile(mgr: ReviewManagerInternal, delta: number): P
 }
 
 export async function reviewNextUnresolved(mgr: ReviewManagerInternal): Promise<void> {
-	const currentFile = mgr.reviewFiles[mgr.currentFileIndex];
-	// Skip the current file — find the next unresolved one
-	const next = mgr.reviewFiles.find((f) => f !== currentFile && state.activeReviews.has(f))
-		// Fallback: if no other file found, open the first unresolved (may be current)
-		?? mgr.reviewFiles.find((f) => state.activeReviews.has(f));
-	if (next) {
-		await mgr.openFileForReview(next);
+	const files = mgr.reviewFiles;
+	const total = files.length;
+	if (total === 0) return;
+
+	// Search forward from current position, wrapping around
+	const startIdx = mgr.currentFileIndex;
+	for (let i = 1; i <= total; i++) {
+		const idx = (startIdx + i) % total;
+		if (state.activeReviews.has(files[idx])) {
+			log.log(`reviewNextUnresolved: from index ${startIdx} → opening index ${idx} (${files[idx]})`);
+			await mgr.openFileForReview(files[idx]);
+			return;
+		}
 	}
+	log.log(`reviewNextUnresolved: no unresolved files remaining`);
 }
 
 export async function openCurrentOrNext(mgr: ReviewManagerInternal): Promise<void> {
@@ -67,6 +75,7 @@ export async function openFileForReview(mgr: ReviewManagerInternal, filePath: st
 
 	const mergedContent = review.mergedLines.join("\n");
 	fs.writeFileSync(filePath, mergedContent, "utf8");
+	(review as FileReview).mergedApplied = true;
 	const doc = await vscode.workspace.openTextDocument(filePath);
 	const editor = await vscode.window.showTextDocument(doc, {
 		preview: false,
@@ -87,7 +96,10 @@ export async function openFileForReview(mgr: ReviewManagerInternal, filePath: st
 				(eb) => eb.replace(fullRange, mergedContent),
 				{ undoStopBefore: true, undoStopAfter: true },
 			);
-			await doc.save();
+			// Write to disk directly — doc.save() triggers formatOnSave which can mutate the buffer
+			fs.writeFileSync(filePath, mergedContent, "utf8");
+			// Clear dirty flag (disk matches buffer, so revert is visually a no-op)
+			try { await vscode.commands.executeCommand("workbench.action.files.revert"); } catch {}
 		} finally {
 			setApplyingEdit(filePath, false);
 		}

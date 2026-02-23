@@ -23,7 +23,9 @@ export type ExtensionToWebviewMessage =
 	| { type: "terminal-error"; sessionId: number; error: string }
 	| { type: "insert-text"; text: string }
 	| { type: "hook-status"; status: HookStatus }
-	| { type: "settings-init"; cliCommand: string; keybindings: KeybindingInfo[] }
+	| { type: "settings-init"; cliCommand: string; keybindings: KeybindingInfo[]; claudeSettings: { effective: Record<string, unknown>; global: Record<string, unknown>; project: Record<string, unknown>; runtime: Record<string, unknown> }; terminalSettings: { shell: string; shellPath: string; loginShell: boolean; cleanEnvironment: boolean; osNotifications: boolean } }
+	| { type: "claude-settings-update"; claudeSettings: { effective: Record<string, unknown>; global: Record<string, unknown>; project: Record<string, unknown>; runtime: Record<string, unknown> } }
+	| { type: "claude-settings-scoped"; scope: string; settings: Record<string, unknown> }
 	| {
 			type: "state-update";
 			review: ReviewStateUpdate;
@@ -70,4 +72,8 @@ export type WebviewToExtensionMessage =
 	| { type: "keep-current-file" }
 	| { type: "undo-current-file" }
 	| { type: "check-hook-status" }
+	| { type: "set-claude-setting"; key: string; value: unknown; scope: string }
+	| { type: "set-claude-runtime"; key: string; value: unknown }
+	| { type: "get-claude-settings-scoped"; scope: string }
+	| { type: "set-terminal-setting"; key: string; value: unknown }
 	| { type: "diag-log"; category: string; message: string; data: Record<string, unknown> | null; timestamp: number };

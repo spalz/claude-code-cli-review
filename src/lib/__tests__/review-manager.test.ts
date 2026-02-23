@@ -68,13 +68,20 @@ beforeEach(() => {
 	state.setReviewFiles([]);
 	state.setCurrentFileIndex(0);
 	state.setCurrentHunkIndex(0);
+	// Reset visible editors so addFile doesn't trigger applyContentViaEdit unexpectedly
+	(vscode.window as any).visibleTextEditors = [];
 	// Default: file returns different content so diff is generated
 	mockFs.readFileSync.mockReturnValue("modified content");
-	// Tracked file: execSync for git ls-files succeeds, git diff returns a diff
+	// Tracked file: execSync for git ls-files succeeds, git show HEAD returns original
 	mockExecSync.mockImplementation((cmd: string) => {
 		if (cmd.includes("git ls-files")) return "";
-		if (cmd.includes("git diff HEAD")) return "@@ -1,1 +1,1 @@\n-original\n+modified content";
 		if (cmd.includes("git show HEAD")) return "original";
+		if (cmd.includes("git diff --no-index")) {
+			const err = new Error("diff") as Error & { stdout: string };
+			err.stdout = "@@ -1,1 +1,1 @@\n-original\n+modified content";
+			throw err;
+		}
+		if (cmd.includes("git diff HEAD")) return "@@ -1,1 +1,1 @@\n-original\n+modified content";
 		return "";
 	});
 });
@@ -169,6 +176,44 @@ describe("addFile", () => {
 		mgr.addFile("/ws/new.ts");
 		const review = state.activeReviews.get("/ws/new.ts");
 		expect(review?.changeType).toBe("create");
+	});
+
+	it("initializes undo history during addFile", () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		expect(mockUndoHistory.initHistory).toHaveBeenCalledWith("/ws/file.ts");
+	});
+
+	it("does NOT write merged content to disk on addFile (deferred to openFileForReview)", () => {
+		const mgr = setupManager();
+		(vscode.window as any).visibleTextEditors = [];
+		mockFs.writeFileSync.mockClear();
+		mgr.addFile("/ws/file.ts");
+		// Merged content is NOT written to disk — deferred until openFileForReview
+		expect(mockFs.writeFileSync).not.toHaveBeenCalled();
+	});
+
+	it("does NOT apply content to editor on addFile (deferred)", () => {
+		const mgr = setupManager();
+		const mockDoc = {
+			uri: { fsPath: "/ws/file.ts" },
+			lineCount: 2,
+			lineAt: () => ({ text: "modified content" }),
+			getText: vi.fn().mockReturnValue("modified content"),
+			save: vi.fn().mockResolvedValue(true),
+		};
+		const mockEditor = {
+			document: mockDoc,
+			visibleRanges: [new vscode.Range(0, 0, 1, 0)],
+			selection: new vscode.Selection(0, 0, 0, 0),
+			revealRange: vi.fn(),
+			edit: vi.fn().mockResolvedValue(true),
+			setDecorations: vi.fn(),
+		};
+		(vscode.window as any).visibleTextEditors = [mockEditor];
+		mgr.addFile("/ws/file.ts");
+		// setApplyingEdit should NOT be called — content applied lazily on openFileForReview
+		expect(mockUndoHistory.setApplyingEdit).not.toHaveBeenCalled();
 	});
 });
 
@@ -677,12 +722,14 @@ describe("undoResolve / redoResolve", () => {
 				uri: { fsPath },
 				lineCount: 10,
 				lineAt: () => ({ text: "" }),
+				getText: vi.fn().mockReturnValue(""),
 				save: vi.fn().mockResolvedValue(true),
 			},
 			edit: vi.fn().mockResolvedValue(true),
 			revealRange: vi.fn(),
 			selection: { active: { line: 0, character: 0 }, anchor: { line: 0, character: 0 } },
 			visibleRanges: [{ start: { line: 0 }, end: { line: 20 } }],
+			setDecorations: vi.fn(),
 		};
 		(vscode.window as any).activeTextEditor = mockEditor;
 		(vscode.window as any).visibleTextEditors = [mockEditor];
@@ -842,7 +889,7 @@ describe("undoResolve / redoResolve", () => {
 		expect(restored.hunks[1].resolved).toBe(false);
 	});
 
-	it("redoResolve pushes current state to undo stack", async () => {
+	it("redoResolve pushes current state to undo stack with preserveRedo=true", async () => {
 		const mgr = setupManager();
 		mgr.addFile("/ws/file.ts");
 		const review = state.activeReviews.get("/ws/file.ts")!;
@@ -861,8 +908,10 @@ describe("undoResolve / redoResolve", () => {
 
 		// Capture at call time since restoreFromSnapshot mutates the review
 		let capturedHunks: any[] = [];
-		mockUndoHistory.pushUndoState.mockImplementationOnce((_path: string, rev: any) => {
+		let capturedPreserveRedo: boolean | undefined;
+		mockUndoHistory.pushUndoState.mockImplementationOnce((_path: string, rev: any, preserveRedo?: boolean) => {
 			capturedHunks = JSON.parse(JSON.stringify(rev.hunks));
+			capturedPreserveRedo = preserveRedo;
 		});
 
 		await mgr.redoResolve();
@@ -870,6 +919,8 @@ describe("undoResolve / redoResolve", () => {
 		expect(capturedHunks).toHaveLength(1);
 		// Current review (pre-redo) had unresolved hunks
 		expect(capturedHunks[0].resolved).toBe(false);
+		// Must pass preserveRedo=true to avoid clearing remaining redo entries
+		expect(capturedPreserveRedo).toBe(true);
 	});
 
 	it("redoResolve when all hunks resolved triggers re-finalize", async () => {
@@ -902,6 +953,46 @@ describe("undoResolve / redoResolve", () => {
 		await mgr.redoResolve();
 		const reviewAfter = JSON.stringify(state.activeReviews.get("/ws/file.ts")!.hunks);
 		expect(reviewAfter).toBe(reviewBefore);
+	});
+
+	it("multiple redo operations work (redo stack not cleared)", async () => {
+		const mgr = setupManager();
+		mgr.addFile("/ws/file.ts");
+		const review = state.activeReviews.get("/ws/file.ts")!;
+
+		setActiveEditor("/ws/file.ts");
+
+		// Track all pushUndoState calls to verify preserveRedo=true
+		const pushUndoCalls: { preserveRedo?: boolean }[] = [];
+		mockUndoHistory.pushUndoState.mockImplementation((_p: string, _r: any, preserveRedo?: boolean) => {
+			pushUndoCalls.push({ preserveRedo });
+		});
+
+		// Simulate 3 redo snapshots (as if user did 3 undos and now does redo 3 times)
+		const snapshots = [
+			makeSnapshot(review, { mergedLines: ["s1"], hunks: [{ ...review.hunks[0], resolved: true, accepted: true }, { ...review.hunks[0], id: 1 }] }),
+			makeSnapshot(review, { mergedLines: ["s2"], hunks: [{ ...review.hunks[0], resolved: true, accepted: true }, { ...review.hunks[0], id: 1 }] }),
+			makeSnapshot(review, { mergedLines: ["s3"], hunks: [{ ...review.hunks[0], resolved: true, accepted: true }, { ...review.hunks[0], id: 1 }] }),
+		];
+
+		// Redo 1
+		mockUndoHistory.popRedoState.mockReturnValueOnce(snapshots[0]);
+		await mgr.redoResolve();
+		expect(pushUndoCalls[0].preserveRedo).toBe(true);
+
+		// Redo 2
+		mockUndoHistory.popRedoState.mockReturnValueOnce(snapshots[1]);
+		await mgr.redoResolve();
+		expect(pushUndoCalls[1].preserveRedo).toBe(true);
+
+		// Redo 3
+		mockUndoHistory.popRedoState.mockReturnValueOnce(snapshots[2]);
+		await mgr.redoResolve();
+		expect(pushUndoCalls[2].preserveRedo).toBe(true);
+
+		// All 3 redo operations called pushUndoState with preserveRedo=true
+		expect(pushUndoCalls).toHaveLength(3);
+		expect(pushUndoCalls.every(c => c.preserveRedo === true)).toBe(true);
 	});
 
 	it("full cycle: resolve → undoResolve → redoResolve", async () => {
@@ -960,7 +1051,8 @@ function mockShowTextDocument(doc: any) {
 		document: doc,
 		edit: vi.fn().mockResolvedValue(true),
 		revealRange: vi.fn(),
-		selection: { active: { line: 0, character: 0 } },
+		selection: new vscode.Selection(0, 0, 0, 0),
+		visibleRanges: [new vscode.Range(0, 0, 10, 0)],
 		setDecorations: vi.fn(),
 	};
 	(vscode.window.showTextDocument as ReturnType<typeof vi.fn>).mockResolvedValue(mockEditor);
@@ -975,8 +1067,13 @@ function addMultipleFiles(mgr: ReviewManager, count: number): string[] {
 		mockFs.readFileSync.mockReturnValue(`modified${i}`);
 		mockExecSync.mockImplementation((cmd: string) => {
 			if (cmd.includes("git ls-files")) return "";
-			if (cmd.includes("git diff HEAD")) return `@@ -1,1 +1,1 @@\n-orig${i}\n+modified${i}`;
 			if (cmd.includes("git show HEAD")) return `orig${i}`;
+			if (cmd.includes("git diff --no-index")) {
+				const err = new Error("diff") as Error & { stdout: string };
+				err.stdout = `@@ -1,1 +1,1 @@\n-orig${i}\n+modified${i}`;
+				throw err;
+			}
+			if (cmd.includes("git diff HEAD")) return `@@ -1,1 +1,1 @@\n-orig${i}\n+modified${i}`;
 			return "";
 		});
 		mgr.addFile(p);
@@ -1000,7 +1097,8 @@ describe("openFileForReview — stale content sync", () => {
 
 		// editor.edit() should be called to sync content
 		expect(mockEditor.edit).toHaveBeenCalledTimes(1);
-		expect(mockDoc.save).toHaveBeenCalled();
+		// saveWithoutFormatting uses fs.writeFileSync + revert (NOT doc.save)
+		expect(mockFs.writeFileSync).toHaveBeenCalledWith("/ws/file.ts", expect.any(String), "utf8");
 	});
 
 	it("skips sync when doc.getText() matches mergedContent", async () => {
@@ -1179,6 +1277,45 @@ describe("reviewNextUnresolved — skip current file", () => {
 		await mgr.reviewNextUnresolved();
 
 		expect(openedFiles).toHaveLength(0);
+	});
+
+	it("wraps around to beginning when at last file", async () => {
+		const mgr = setupManager();
+		const paths = addMultipleFiles(mgr, 3);
+
+		// Be on file2 (last file, index 2)
+		const mergedContent = state.activeReviews.get(paths[2])!.mergedLines.join("\n");
+		const mockDoc = mockOpenTextDocument(mergedContent);
+		mockDoc.uri.fsPath = paths[2];
+		mockShowTextDocument(mockDoc);
+		await mgr.openFileForReview(paths[2]);
+
+		const openedFiles = setupOpenMock(mgr);
+		await mgr.reviewNextUnresolved();
+
+		// Should wrap around to file0
+		expect(openedFiles).toEqual([paths[0]]);
+	});
+
+	it("wraps around skipping resolved files", async () => {
+		const mgr = setupManager();
+		const paths = addMultipleFiles(mgr, 4);
+
+		// Be on file2, resolve file3 and file0
+		const mergedContent = state.activeReviews.get(paths[2])!.mergedLines.join("\n");
+		const mockDoc = mockOpenTextDocument(mergedContent);
+		mockDoc.uri.fsPath = paths[2];
+		mockShowTextDocument(mockDoc);
+		await mgr.openFileForReview(paths[2]);
+
+		state.activeReviews.delete(paths[3]); // resolve file3
+		state.activeReviews.delete(paths[0]); // resolve file0
+
+		const openedFiles = setupOpenMock(mgr);
+		await mgr.reviewNextUnresolved();
+
+		// Should wrap past file3 (resolved) and file0 (resolved), open file1
+		expect(openedFiles).toEqual([paths[1]]);
 	});
 
 	it("skips resolved files and finds next unresolved", async () => {

@@ -103,6 +103,55 @@ describe("undo-history (stack-based)", () => {
 		expect(hasRedoState("/ws/file.ts")).toBe(false);
 	});
 
+	it("pushUndoState with preserveRedo=true keeps redo stack", () => {
+		initHistory("/ws/file.ts");
+		const r1 = makeFakeReview({ mergedLines: ["redo1"] });
+		const r2 = makeFakeReview({ mergedLines: ["redo2"] });
+		const r3 = makeFakeReview({ mergedLines: ["current"] });
+
+		pushRedoState("/ws/file.ts", r1);
+		pushRedoState("/ws/file.ts", r2);
+		expect(hasRedoState("/ws/file.ts")).toBe(true);
+
+		pushUndoState("/ws/file.ts", r3, true);
+		expect(hasRedoState("/ws/file.ts")).toBe(true);
+
+		// Redo stack still has both entries
+		const snap1 = popRedoState("/ws/file.ts");
+		expect(snap1!.mergedLines).toEqual(["redo2"]);
+		const snap2 = popRedoState("/ws/file.ts");
+		expect(snap2!.mergedLines).toEqual(["redo1"]);
+	});
+
+	it("pushUndoState with preserveRedo=false (default) clears redo stack", () => {
+		initHistory("/ws/file.ts");
+		pushRedoState("/ws/file.ts", makeFakeReview({ mergedLines: ["redo"] }));
+
+		pushUndoState("/ws/file.ts", makeFakeReview({ mergedLines: ["new"] }), false);
+		expect(hasRedoState("/ws/file.ts")).toBe(false);
+	});
+
+	it("multiple redo operations preserve full redo stack", () => {
+		// Simulate: 5 undos → redo stack has 5 entries → redo 5 times
+		// Each redo calls pushUndoState(_, _, true) — redo stack should shrink by 1 each time
+		initHistory("/ws/file.ts");
+		const states = Array.from({ length: 5 }, (_, i) => makeFakeReview({ mergedLines: [`redo${i}`] }));
+		for (const s of states) pushRedoState("/ws/file.ts", s);
+
+		// Simulate 5 redo operations: pop redo, push undo with preserveRedo
+		for (let i = 4; i >= 0; i--) {
+			const snapshot = popRedoState("/ws/file.ts");
+			expect(snapshot).toBeDefined();
+			expect(snapshot!.mergedLines).toEqual([`redo${i}`]);
+			pushUndoState("/ws/file.ts", makeFakeReview({ mergedLines: [`before-redo${i}`] }), true);
+		}
+
+		// All redo consumed
+		expect(hasRedoState("/ws/file.ts")).toBe(false);
+		// All pushed to undo (5 redo pops + 5 undo pushes = 5 undo entries)
+		expect(hasUndoState("/ws/file.ts")).toBe(true);
+	});
+
 	it("redo stack round-trip", () => {
 		initHistory("/ws/file.ts");
 		const review = makeFakeReview();
@@ -149,9 +198,9 @@ describe("undo-history (stack-based)", () => {
 		expect(isApplyingEdit("/ws/nope.ts")).toBe(false);
 	});
 
-	it("pushUndoState without initHistory is a no-op", () => {
+	it("pushUndoState auto-initializes history if not present", () => {
 		pushUndoState("/ws/file.ts", makeFakeReview());
-		expect(hasUndoState("/ws/file.ts")).toBe(false);
+		expect(hasUndoState("/ws/file.ts")).toBe(true);
 	});
 
 	it("pushRedoState without initHistory is a no-op", () => {
@@ -227,6 +276,17 @@ describe("updateContextKeys side effects", () => {
 
 		// Clear only a.ts
 		clearHistory("/ws/a.ts");
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canUndoReview", true);
+	});
+
+	it("preserveRedo=true keeps canRedo=true", () => {
+		initHistory("/ws/file.ts");
+		pushRedoState("/ws/file.ts", makeFakeReview());
+		executeCommand.mockClear();
+
+		pushUndoState("/ws/file.ts", makeFakeReview(), true);
+
+		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canRedoReview", true);
 		expect(executeCommand).toHaveBeenCalledWith("setContext", "ccr.canUndoReview", true);
 	});
 

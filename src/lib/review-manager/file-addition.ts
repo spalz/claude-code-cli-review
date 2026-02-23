@@ -7,10 +7,11 @@ import * as state from "../state";
 import { getSnapshot, clearSnapshot } from "../server";
 import { FileReview, buildMergedContent } from "../review";
 import { computeDiff } from "../diff";
+import { initHistory } from "../undo-history";
 import type { ChangeType } from "../../types";
 import type { ReviewManagerInternal } from "./types";
 
-export function addFile(mgr: ReviewManagerInternal, absFilePath: string): void {
+export async function addFile(mgr: ReviewManagerInternal, absFilePath: string): Promise<void> {
 	log.log(`ReviewManager.addFile: ${absFilePath}`);
 
 	// Read modified content from disk
@@ -19,7 +20,7 @@ export function addFile(mgr: ReviewManagerInternal, absFilePath: string): void {
 		modifiedContent = fs.readFileSync(absFilePath, "utf8");
 	} catch {
 		// File doesn't exist — possibly deleted via Bash rm
-		handleMissingFile(mgr, absFilePath);
+		await handleMissingFile(mgr, absFilePath);
 		return;
 	}
 
@@ -78,23 +79,31 @@ export function addFile(mgr: ReviewManagerInternal, absFilePath: string): void {
 	// Consume the snapshot after use
 	clearSnapshot(absFilePath);
 
+	// Initialize undo history so pushUndoState works when user clicks Keep/Undo
+	initHistory(absFilePath);
+
+	// Deferred merged content: do NOT write merged to disk here.
+	// Merged content is applied lazily when the user opens the file for review
+	// (openFileForReview / ensureMergedContent). This prevents Claude's PreToolUse
+	// hook from capturing merged content instead of the real file content.
+	mgr.syncState();
+	mgr.refreshUI();
+
 	log.log(
 		`ReviewManager.addFile: added ${absFilePath}, ${hunks.length} hunks, type=${changeType}`,
 	);
-	mgr.syncState();
-	mgr.refreshUI();
 	mgr.scheduleSave();
 	mgr._onReviewStateChange.fire(true);
 }
 
-export function handleMissingFile(mgr: ReviewManagerInternal, absFilePath: string): void {
+export async function handleMissingFile(mgr: ReviewManagerInternal, absFilePath: string): Promise<void> {
 	// Try to find original content from snapshot or existing review
 	const snapshot = getSnapshot(absFilePath);
 	const existingOrig = state.activeReviews.get(absFilePath)?.originalContent;
 	const origContent = snapshot ?? existingOrig;
 
 	if (origContent) {
-		handleDeletion(mgr, absFilePath, origContent);
+		await handleDeletion(mgr, absFilePath, origContent);
 		return;
 	}
 
@@ -108,7 +117,7 @@ export function handleMissingFile(mgr: ReviewManagerInternal, absFilePath: strin
 				timeout: 5000,
 				stdio: "pipe",
 			});
-			handleDeletion(mgr, absFilePath, gitContent);
+			await handleDeletion(mgr, absFilePath, gitContent);
 			return;
 		}
 	} catch {}
@@ -116,7 +125,7 @@ export function handleMissingFile(mgr: ReviewManagerInternal, absFilePath: strin
 	log.log(`ReviewManager.addFile: cannot read ${absFilePath}`);
 }
 
-export function handleDeletion(mgr: ReviewManagerInternal, absFilePath: string, originalContent: string): void {
+export async function handleDeletion(mgr: ReviewManagerInternal, absFilePath: string, originalContent: string): Promise<void> {
 	// Remove old review if present
 	if (state.activeReviews.has(absFilePath)) {
 		state.activeReviews.delete(absFilePath);
@@ -148,25 +157,33 @@ export function handleDeletion(mgr: ReviewManagerInternal, absFilePath: string, 
 	}
 
 	clearSnapshot(absFilePath);
-	log.log(`ReviewManager.handleDeletion: ${absFilePath}, type=delete`);
+
+	// Initialize undo history so pushUndoState works when user clicks Keep/Undo
+	initHistory(absFilePath);
+
+	// Deferred: do NOT write merged to disk — applied lazily on file open
 	mgr.syncState();
 	mgr.refreshUI();
+
+	log.log(`ReviewManager.handleDeletion: ${absFilePath}, type=delete`);
 	mgr.scheduleSave();
 	mgr._onReviewStateChange.fire(true);
 }
 
 export function getOriginalContent(mgr: ReviewManagerInternal, absFilePath: string, existingOriginal?: string): string {
-	// 1. PreToolUse snapshot (most accurate — file content right before Claude's edit)
+	// 1. Existing review's original — the TRUE original from before any Claude edits.
+	// This takes priority because snapshots may contain merged content when
+	// mergedApplied is true (PreToolUse hook reads from disk which has merged content).
+	if (existingOriginal !== undefined) {
+		log.log(`ReviewManager: using existing review original for ${absFilePath}`);
+		return existingOriginal;
+	}
+
+	// 2. PreToolUse snapshot (file content right before Claude's edit — only used for first edit)
 	const snapshot = getSnapshot(absFilePath);
 	if (snapshot !== undefined) {
 		log.log(`ReviewManager: using PreToolUse snapshot for ${absFilePath}`);
 		return snapshot;
-	}
-
-	// 2. Existing review's original (preserved from earlier addFile call)
-	if (existingOriginal !== undefined) {
-		log.log(`ReviewManager: using existing review original for ${absFilePath}`);
-		return existingOriginal;
 	}
 
 	// 3. git show HEAD:path (only for files inside the workspace)

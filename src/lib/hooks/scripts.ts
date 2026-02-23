@@ -89,18 +89,13 @@ export function getNotifyHookScript(): string {
 	return `#!/usr/bin/env bash
 # Claude Code Review — Notification hook v${HOOK_VERSION}
 # Managed by Claude Code Review extension. Do not edit manually.
-# Sends OS-level notifications so the user doesn't miss Claude Code events.
+# Forwards notifications to the extension server which decides whether to show OS alerts.
 
 INPUT=$(cat)
 
-MESSAGE=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('message','Claude Code needs your attention'))" 2>/dev/null || echo "Claude Code needs your attention")
-TITLE=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('title','Claude Code Review'))" 2>/dev/null || echo "Claude Code Review")
-
-if [[ "$(uname)" == "Darwin" ]]; then
-  osascript -e "display notification \\"$MESSAGE\\" with title \\"$TITLE\\"" 2>/dev/null
-elif command -v notify-send &>/dev/null; then
-  notify-send "$TITLE" "$MESSAGE" 2>/dev/null
-fi
+curl -s -X POST http://127.0.0.1:27182/notify \
+  -H "Content-Type: application/json" \
+  -d "$INPUT" 2>/dev/null || true
 
 exit 0
 `;

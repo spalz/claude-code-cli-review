@@ -19,9 +19,19 @@ export function checkAndPrompt(
 
 	const exists = fs.existsSync(getHookPath(workspacePath));
 	const status: HookStatus = exists ? "outdated" : "missing";
-	log.log(`checkAndPrompt: hooks ${status}`);
-	onStatusChange?.(status);
-	return status;
+	log.log(`checkAndPrompt: hooks ${status}, auto-installing...`);
+
+	// Auto-install hooks on first activation or when outdated
+	try {
+		installHook(workspacePath);
+		log.log("checkAndPrompt: auto-install succeeded");
+		onStatusChange?.("installed");
+		return "installed";
+	} catch (err) {
+		log.log(`checkAndPrompt: auto-install failed — ${(err as Error).message}`);
+		onStatusChange?.(status);
+		return status;
+	}
 }
 
 export function doInstall(workspacePath: string, onStatusChange?: HookStatusCallback): void {

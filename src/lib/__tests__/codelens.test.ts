@@ -159,7 +159,7 @@ describe("ReviewCodeLensProvider", () => {
 		expect(lenses[0].command?.arguments).toEqual(["/test/file.ts", 1]);
 	});
 
-	it("shows next file lens when multiple review files remain", () => {
+	it("does not show next file lens (removed feature)", () => {
 		const review = makeFakeReview();
 		state.activeReviews.set("/test/file.ts", review);
 		state.activeReviews.set("/test/other.ts", makeFakeReview({ filePath: "/test/other.ts" }));
@@ -168,21 +168,7 @@ describe("ReviewCodeLensProvider", () => {
 		const doc = makeDocument("/test/file.ts");
 		const lenses = provider.provideCodeLenses(doc);
 
-		const nextFileLens = lenses[lenses.length - 1];
-		expect(nextFileLens.command?.title).toBe("$(arrow-right) Next file (1 remaining)");
-		expect(nextFileLens.command?.command).toBe("ccr.reviewNextUnresolved");
-	});
-
-	it("does not show next file lens when only one review file", () => {
-		const review = makeFakeReview();
-		state.activeReviews.set("/test/file.ts", review);
-		state.setReviewFiles(["/test/file.ts"]);
-
-		const doc = makeDocument("/test/file.ts");
-		const lenses = provider.provideCodeLenses(doc);
-
-		// Only Keep + Undo
-		expect(lenses).toHaveLength(2);
+		// No "Next file" lens — only Keep + Undo + counter
 		expect(lenses.every((l) => l.command?.command !== "ccr.reviewNextUnresolved")).toBe(true);
 	});
 
@@ -210,7 +196,7 @@ describe("ReviewCodeLensProvider", () => {
 		expect(lenses).toHaveLength(0);
 	});
 
-	it("clamps next file lens line to document.lineCount - 1", () => {
+	it("no next file lens even with large hunk ranges", () => {
 		const review = makeFakeReview({
 			hunkRanges: [makeHunkRange({ hunkId: 0, addedEnd: 999 })],
 		});
@@ -221,8 +207,7 @@ describe("ReviewCodeLensProvider", () => {
 		const doc = makeDocument("/test/file.ts", 10);
 		const lenses = provider.provideCodeLenses(doc);
 
-		const nextFileLens = lenses[lenses.length - 1];
-		expect(nextFileLens.range.start.line).toBe(9); // lineCount - 1
+		expect(lenses.every((l) => l.command?.command !== "ccr.reviewNextUnresolved")).toBe(true);
 	});
 
 	it("refresh fires onDidChangeCodeLenses event", () => {

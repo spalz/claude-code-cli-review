@@ -4,10 +4,9 @@ import * as state from "./lib/state";
 import { ReviewCodeLensProvider } from "./lib/codelens";
 import { MainViewProvider } from "./lib/main-view";
 import { PtyManager } from "./lib/pty-manager";
-import { applyDecorations } from "./lib/decorations";
-import { startServer, stopServer, setAddFileHandler, setWorkspacePath } from "./lib/server";
+import { applyDecorations, clearDecorations } from "./lib/decorations";
+import { startServer, stopServer, setAddFileHandler, setWorkspacePath, setGetActiveReviewHandler } from "./lib/server";
 import { checkAndPrompt, doInstall } from "./lib/hooks";
-import { createReviewStatusBar, updateReviewStatusBar } from "./lib/status-bar";
 import { ReviewManager } from "./lib/review-manager";
 import { registerDocumentListener } from "./lib/document-listener";
 import { clearAllHistories } from "./lib/undo-history";
@@ -72,18 +71,6 @@ export function activate(context: vscode.ExtensionContext): void {
 			vscode.languages.registerCodeLensProvider({ scheme: "file" }, codeLens),
 		);
 
-		// --- Review StatusBar navigation (context-sensitive) ---
-		createReviewStatusBar(context, workspacePath);
-
-		// Wrap refreshAll/refreshReview to also update StatusBar
-		state.setRefreshAll((base) => {
-			base();
-			updateReviewStatusBar();
-		});
-		state.setRefreshReview((base) => {
-			base();
-			updateReviewStatusBar();
-		});
 
 		// --- setContext for keybindings ---
 		reviewManager.onReviewStateChange((hasActive) => {
@@ -205,8 +192,18 @@ export function activate(context: vscode.ExtensionContext): void {
 		context.subscriptions.push(
 			vscode.window.onDidChangeActiveTextEditor((editor) => {
 				if (editor) {
-					const review = state.activeReviews.get(editor.document.uri.fsPath);
-					if (review) applyDecorations(editor, review);
+					const filePath = editor.document.uri.fsPath;
+					const review = state.activeReviews.get(filePath);
+					if (review) {
+						const mergedContent = review.mergedLines.join("\n");
+						if (editor.document.getText() === mergedContent) {
+							applyDecorations(editor, review);
+						} else {
+							// Content doesn't match — self-heal by reapplying merged content
+							clearDecorations(editor);
+							void reviewManager!.ensureMergedContent(filePath);
+						}
+					}
 				}
 				// Always refresh — including when editor is undefined (all tabs closed)
 				// so the toolbar switches from full navigation to "Review next file"
@@ -216,9 +213,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
 		// --- HTTP server + hook bridge ---
 		setAddFileHandler((filePath) => {
-			reviewManager!.addFile(filePath);
+			void reviewManager!.addFile(filePath);
 		});
 		setWorkspacePath(workspacePath);
+		setGetActiveReviewHandler((filePath) => state.activeReviews.get(filePath));
 		startServer();
 		context.subscriptions.push({
 			dispose: () => {
