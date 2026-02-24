@@ -1,4 +1,6 @@
 // Core utilities — loaded first, provides globals for other webview modules
+// Depends on: vscode webview API (acquireVsCodeApi)
+// Exports: window.{send, switchMode, showTerminalView, showSessionsList, setCurrentFilePath, viewMode, fitActiveTerminal}
 (function () {
 	"use strict";
 
@@ -25,7 +27,11 @@
 		if (!skipPersist) {
 			send("set-view-mode", { mode: mode });
 		}
-		if (window.diagLog) diagLog("view", "switchMode", { from: previousMode, to: mode });
+		var beforeBuf = null;
+		if (window.getTermBufferState && window.getActiveTerminalId && window.getTerminals) {
+			var aid = getActiveTerminalId();
+			if (aid) beforeBuf = getTermBufferState(getTerminals().get(aid));
+		}
 		var sessionMode = document.getElementById("headerSessionMode");
 		var terminalMode = document.getElementById("headerTerminalMode");
 		var sessionsView = document.getElementById("sessionsView");
@@ -44,9 +50,15 @@
 			terminalView.classList.add("active");
 			terminalView.style.display = "";
 			if (window.fitActiveTerminal) {
-				setTimeout(window.fitActiveTerminal, 50);
+				setTimeout(function () { window.fitActiveTerminal("switchMode"); }, 50);
 			}
 		}
+		var afterBuf = null;
+		if (window.getTermBufferState && window.getActiveTerminalId && window.getTerminals) {
+			var aid2 = getActiveTerminalId();
+			if (aid2) afterBuf = getTermBufferState(getTerminals().get(aid2));
+		}
+		if (window.diagLog) diagLog("scroll-diag", "switchMode", { from: previousMode, to: mode, beforeBuf: beforeBuf, afterBuf: afterBuf });
 	};
 
 	// Confirmation dialog
@@ -101,6 +113,15 @@
 		document.getElementById("onboardingPath").textContent = data.workspacePath || data.folderName;
 		document.getElementById("onboardingInstallHooks").checked = !data.hooksInstalled;
 		document.getElementById("onboardingHooksRow").style.display = data.hooksInstalled ? "none" : "";
+		// MCP servers
+		var mcpRow = document.getElementById("onboardingMcpRow");
+		var mcpText = document.getElementById("onboardingMcpText");
+		if (data.mcpServers && data.mcpServers.length > 0) {
+			mcpRow.style.display = "";
+			mcpText.textContent = "Use MCP servers: " + data.mcpServers.join(", ");
+		} else {
+			mcpRow.style.display = "none";
+		}
 		document.getElementById("onboardingOverlay").style.display = "";
 	};
 

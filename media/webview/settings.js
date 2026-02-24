@@ -1,5 +1,7 @@
 // Settings — shortcuts display, hook status, CLI command, Claude CLI settings
 // Now rendered inside #settingsOverlay instead of a tab panel
+// Depends on: core.js (send)
+// Exports: window.{updateShortcuts, updateClaudeSettings, onClaudeSettingsUpdate, updateHookUI, updateTerminalSettings}
 (function () {
 	"use strict";
 
@@ -42,48 +44,8 @@
 		});
 	}
 
-	// --- Terminal settings ---
-	var tsShell = document.getElementById("ts_shell");
-	var tsShellPath = document.getElementById("ts_shellPath");
-	var tsLoginShell = document.getElementById("ts_loginShell");
-	var tsCleanEnv = document.getElementById("ts_cleanEnv");
-	var shellPathRow = document.getElementById("shellPathRow");
-
-	if (tsShell) {
-		tsShell.addEventListener("change", function () {
-			send("set-terminal-setting", { key: "shell", value: this.value });
-			if (shellPathRow) shellPathRow.style.display = this.value === "custom" ? "" : "none";
-		});
-	}
-	if (tsShellPath) {
-		var commitPath = function () {
-			send("set-terminal-setting", { key: "shellPath", value: tsShellPath.value });
-		};
-		tsShellPath.addEventListener("change", commitPath);
-		tsShellPath.addEventListener("keydown", function (e) {
-			if (e.key === "Enter") tsShellPath.blur();
-		});
-	}
-	if (tsLoginShell) {
-		tsLoginShell.addEventListener("change", function () {
-			send("set-terminal-setting", { key: "loginShell", value: this.checked });
-		});
-	}
-	if (tsCleanEnv) {
-		tsCleanEnv.addEventListener("change", function () {
-			send("set-terminal-setting", { key: "cleanEnvironment", value: this.checked });
-		});
-	}
-
 	window.updateTerminalSettings = function (data) {
 		if (!data) return;
-		if (tsShell) {
-			tsShell.value = data.shell || "auto";
-			if (shellPathRow) shellPathRow.style.display = data.shell === "custom" ? "" : "none";
-		}
-		if (tsShellPath) tsShellPath.value = data.shellPath || "";
-		if (tsLoginShell) tsLoginShell.checked = data.loginShell !== false;
-		if (tsCleanEnv) tsCleanEnv.checked = !!data.cleanEnvironment;
 		if (tsOsNotif) tsOsNotif.checked = data.osNotifications !== false;
 	};
 

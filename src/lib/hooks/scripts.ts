@@ -10,7 +10,12 @@ LOG="/tmp/ccr-hook.log"
 echo "[ccr-hook] $(date +%H:%M:%S) --- post hook invoked ---" >> "$LOG"
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-CCR_PORT=$(cat "$HOOK_DIR/../ccr-port" 2>/dev/null || echo 27182)
+CCR_PORT_FILE="$HOOK_DIR/../ccr-port"
+if [[ ! -f "$CCR_PORT_FILE" ]]; then
+  echo "[ccr-hook] $(date +%H:%M:%S) skip: no ccr-port file (VS Code not running?)" >> "$LOG"
+  exit 0
+fi
+CCR_PORT=$(cat "$CCR_PORT_FILE")
 echo "[ccr-hook] $(date +%H:%M:%S) port=$CCR_PORT" >> "$LOG"
 
 INPUT=$(cat)
@@ -57,7 +62,12 @@ LOG="/tmp/ccr-hook.log"
 echo "[ccr-pre-hook] $(date +%H:%M:%S) --- pre hook invoked ---" >> "$LOG"
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-CCR_PORT=$(cat "$HOOK_DIR/../ccr-port" 2>/dev/null || echo 27182)
+CCR_PORT_FILE="$HOOK_DIR/../ccr-port"
+if [[ ! -f "$CCR_PORT_FILE" ]]; then
+  echo "[ccr-pre-hook] $(date +%H:%M:%S) skip: no ccr-port file" >> "$LOG"
+  exit 0
+fi
+CCR_PORT=$(cat "$CCR_PORT_FILE")
 echo "[ccr-pre-hook] $(date +%H:%M:%S) port=$CCR_PORT" >> "$LOG"
 
 INPUT=$(cat)
@@ -100,7 +110,9 @@ export function getNotifyHookScript(): string {
 # Forwards notifications to the extension server which decides whether to show OS alerts.
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-CCR_PORT=$(cat "$HOOK_DIR/../ccr-port" 2>/dev/null || echo 27182)
+CCR_PORT_FILE="$HOOK_DIR/../ccr-port"
+[[ ! -f "$CCR_PORT_FILE" ]] && exit 0
+CCR_PORT=$(cat "$CCR_PORT_FILE")
 
 INPUT=$(cat)
 

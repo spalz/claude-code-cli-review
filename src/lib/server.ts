@@ -5,6 +5,7 @@ import { execSync } from "child_process";
 import * as vscode from "vscode";
 import * as state from "./state";
 import * as log from "./log";
+import { fileLog } from "./file-logger";
 import { parseBashCommand } from "./bash-file-parser";
 
 const DEFAULT_PORT = 27182;
@@ -39,7 +40,7 @@ export function clearSnapshot(filePath: string): void {
 
 function createServer(): http.Server {
 	return http.createServer((req: http.IncomingMessage, res: http.ServerResponse) => {
-		log.log(`HTTP ${req.method} ${req.url}`);
+		fileLog.log("server", `${req.method} ${req.url}`);
 		res.setHeader("Access-Control-Allow-Origin", "*");
 		res.setHeader("Access-Control-Allow-Methods", "POST,GET,OPTIONS");
 		res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -69,6 +70,7 @@ function createServer(): http.Server {
 			readBody(req, (body) => {
 				try {
 					const data = JSON.parse(body) as { file?: string; content?: string; tool?: string; command?: string };
+					fileLog.log("server", `/snapshot`, { tool: data.tool, file: data.file, command: data.command?.slice(0, 100) });
 					if (data.tool === "Bash" && data.command) {
 						const changes = parseBashCommand(data.command, _workspacePath);
 						const allFiles = [...changes.deleted, ...changes.modified];
@@ -130,7 +132,7 @@ function createServer(): http.Server {
 			readBody(req, (body) => {
 				try {
 					const data = JSON.parse(body) as { file?: string; tool?: string; command?: string };
-					log.log(`/changed: tool=${data.tool}, file=${data.file}`);
+					fileLog.log("server", `/changed`, { tool: data.tool, file: data.file, command: data.command?.slice(0, 100) });
 					if (data.tool === "Bash" && data.command) {
 						const changes = parseBashCommand(data.command, _workspacePath);
 						for (const file of [...changes.modified, ...changes.deleted]) {

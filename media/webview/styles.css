@@ -840,6 +840,26 @@ vscode-context-menu {
 	line-height: 1.5;
 	margin-bottom: 14px;
 }
+.onboarding-permissions {
+	margin-bottom: 14px;
+	padding: 8px 10px;
+	background: var(--vscode-textBlockQuote-background, rgba(255,255,255,0.04));
+	border-radius: 4px;
+	font-size: 12px;
+}
+.onboarding-perm {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 0;
+	opacity: 0.8;
+}
+.onboarding-perm .codicon {
+	font-size: 14px;
+	opacity: 0.6;
+	width: 16px;
+	text-align: center;
+}
 .onboarding-section {
 	margin-bottom: 14px;
 	border-top: 1px solid var(--border);

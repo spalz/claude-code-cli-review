@@ -14,6 +14,7 @@ import { registerDocumentListener } from "./lib/document-listener";
 import { clearAllHistories } from "./lib/undo-history";
 import * as actions from "./lib/actions";
 import * as log from "./lib/log";
+import { fileLog } from "./lib/file-logger";
 import { clearReviewState } from "./lib/persistence";
 import type { HookStatus } from "./types";
 
@@ -29,6 +30,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		log.log("no workspace folder, skipping activation");
 		return;
 	}
+
+	fileLog.init(workspacePath);
 
 	try {
 		// --- ReviewManager ---
@@ -252,6 +255,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				if (editor) {
 					const filePath = editor.document.uri.fsPath;
 					const review = state.activeReviews.get(filePath);
+					vscode.commands.executeCommand("setContext", "ccr.activeFileInReview", !!review);
 					if (review) {
 						const mergedContent = review.mergedLines.join("\n");
 						if (editor.document.getText() === mergedContent) {
@@ -263,6 +267,8 @@ export function activate(context: vscode.ExtensionContext): void {
 							void reviewManager!.ensureMergedContent(filePath);
 						}
 					}
+				} else {
+					vscode.commands.executeCommand("setContext", "ccr.activeFileInReview", false);
 				}
 				// Always refresh — including when editor is undefined (all tabs closed)
 				// so the toolbar switches from full navigation to "Review next file"
@@ -393,4 +399,5 @@ export function deactivate(): void {
 	// dispose() handles save + file restoration + port file cleanup via context.subscriptions
 	clearAllHistories();
 	stopServer();
+	fileLog.dispose();
 }

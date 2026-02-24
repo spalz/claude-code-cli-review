@@ -223,12 +223,12 @@
 			{
 				"command": "ccr.undo",
 				"key": "cmd+z",
-				"when": "ccr.canUndoReview && editorTextFocus"
+				"when": "ccr.canUndoReview && ccr.activeFileInReview && editorTextFocus"
 			},
 			{
 				"command": "ccr.redo",
 				"key": "cmd+shift+z",
-				"when": "ccr.canRedoReview && editorTextFocus"
+				"when": "ccr.canRedoReview && ccr.activeFileInReview && editorTextFocus"
 			}
 		],
 		"configuration": {
@@ -246,39 +246,6 @@
 						"Use 'happy' wrapper CLI"
 					],
 					"description": "CLI command for Claude sessions",
-					"scope": "window"
-				},
-				"claudeCodeReview.shell": {
-					"type": "string",
-					"default": "auto",
-					"enum": ["auto", "bash", "zsh", "fish", "powershell", "custom"],
-					"enumDescriptions": [
-						"Auto-detect from $SHELL (current behavior)",
-						"/bin/bash",
-						"/bin/zsh",
-						"/usr/bin/fish",
-						"PowerShell (Windows)",
-						"Custom path below"
-					],
-					"description": "Shell used for PTY sessions",
-					"scope": "window"
-				},
-				"claudeCodeReview.shellPath": {
-					"type": "string",
-					"default": "",
-					"description": "Custom shell path (when shell = custom)",
-					"scope": "window"
-				},
-				"claudeCodeReview.loginShell": {
-					"type": "boolean",
-					"default": true,
-					"description": "Use login shell (-l). Disable for minimal environment.",
-					"scope": "window"
-				},
-				"claudeCodeReview.cleanEnvironment": {
-					"type": "boolean",
-					"default": false,
-					"description": "Strip user env, keep only PATH/HOME/USER/LANG/TERM/SHELL/TMPDIR.",
 					"scope": "window"
 				},
 				"claudeCodeReview.osNotifications": {

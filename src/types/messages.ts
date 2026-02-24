@@ -23,7 +23,7 @@ export type ExtensionToWebviewMessage =
 	| { type: "terminal-error"; sessionId: number; error: string }
 	| { type: "insert-text"; text: string }
 	| { type: "hook-status"; status: HookStatus }
-	| { type: "settings-init"; cliCommand: string; keybindings: KeybindingInfo[]; claudeSettings: { effective: Record<string, unknown>; global: Record<string, unknown>; project: Record<string, unknown>; runtime: Record<string, unknown> }; terminalSettings: { shell: string; shellPath: string; loginShell: boolean; cleanEnvironment: boolean; osNotifications: boolean } }
+	| { type: "settings-init"; cliCommand: string; keybindings: KeybindingInfo[]; claudeSettings: { effective: Record<string, unknown>; global: Record<string, unknown>; project: Record<string, unknown>; runtime: Record<string, unknown> }; terminalSettings: { osNotifications: boolean } }
 	| { type: "claude-settings-update"; claudeSettings: { effective: Record<string, unknown>; global: Record<string, unknown>; project: Record<string, unknown>; runtime: Record<string, unknown> } }
 	| { type: "claude-settings-scoped"; scope: string; settings: Record<string, unknown> }
 	| {
@@ -34,7 +34,7 @@ export type ExtensionToWebviewMessage =
 	| { type: "restore-view-mode"; mode: string }
 	| { type: "lazy-session-ready"; placeholderPtyId: number; realPtyId: number; claudeId: string }
 	| { type: "activate-lazy-session"; claudeId: string }
-	| { type: "show-onboarding"; folderName: string; workspacePath: string; hooksInstalled: boolean }
+	| { type: "show-onboarding"; folderName: string; workspacePath: string; hooksInstalled: boolean; mcpServers: string[] }
 ;
 
 export type WebviewToExtensionMessage =

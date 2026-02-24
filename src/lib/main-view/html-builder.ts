@@ -120,32 +120,6 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
       </div>
     </div>
     <div class="settings-section">
-      <div class="settings-title">Terminal</div>
-      <div class="settings-row">
-        <span class="label">Shell</span>
-        <vscode-single-select id="ts_shell">
-          <vscode-option value="auto">auto (from $SHELL)</vscode-option>
-          <vscode-option value="bash">bash</vscode-option>
-          <vscode-option value="zsh">zsh</vscode-option>
-          <vscode-option value="fish">fish</vscode-option>
-          <vscode-option value="powershell">powershell</vscode-option>
-          <vscode-option value="custom">custom</vscode-option>
-        </vscode-single-select>
-      </div>
-      <div class="settings-row" id="shellPathRow" style="display:none">
-        <span class="label">Shell path</span>
-        <vscode-textfield id="ts_shellPath" placeholder="/usr/local/bin/bash"></vscode-textfield>
-      </div>
-      <div class="settings-row">
-        <span class="label">Login shell (-l)</span>
-        <vscode-checkbox id="ts_loginShell" checked></vscode-checkbox>
-      </div>
-      <div class="settings-row">
-        <span class="label">Clean environment</span>
-        <vscode-checkbox id="ts_cleanEnv"></vscode-checkbox>
-      </div>
-    </div>
-    <div class="settings-section">
       <div class="settings-title" style="display:flex;align-items:center;justify-content:space-between">
         <span>Claude CLI</span>
         <div class="scope-toggle" id="scopeToggle">
@@ -298,6 +272,11 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
   <div class="onboarding-dialog">
     <div class="onboarding-path" id="onboardingPath"></div>
     <p class="onboarding-desc">Do you trust this folder? Claude will be able to read, edit, and run files here.</p>
+    <div class="onboarding-permissions">
+      <div class="onboarding-perm"><span class="codicon codicon-file-code"></span> Read, edit, and create files</div>
+      <div class="onboarding-perm"><span class="codicon codicon-terminal"></span> Execute shell commands</div>
+      <div class="onboarding-perm" id="onboardingMcpRow" style="display:none"><span class="codicon codicon-extensions"></span> <span id="onboardingMcpText">Use MCP servers</span></div>
+    </div>
     <div class="onboarding-section" id="onboardingHooksRow">
       <div class="onboarding-row">
         <span class="label">Install review hooks</span>

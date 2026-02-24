@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
 import * as log from "../log";
+import { fileLog } from "../file-logger";
 import * as state from "../state";
 import { getSnapshot, clearSnapshot } from "../server";
 import { FileReview, buildMergedContent } from "../review";
@@ -12,7 +13,7 @@ import type { ChangeType } from "../../types";
 import type { ReviewManagerInternal } from "./types";
 
 export async function addFile(mgr: ReviewManagerInternal, absFilePath: string): Promise<void> {
-	log.log(`ReviewManager.addFile: ${absFilePath}`);
+	fileLog.log("review", `addFile: ${absFilePath}`);
 
 	// Read modified content from disk
 	let modifiedContent: string;

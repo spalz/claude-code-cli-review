@@ -3,6 +3,7 @@ import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
 import * as log from "../log";
+import { fileLog } from "../file-logger";
 import * as state from "../state";
 import { readClaudeSettings, readClaudeSettingsScoped, writeClaudeSetting, writeClaudeRuntimeState, trustProject } from "../claude-settings";
 import type { SettingsScope } from "../claude-settings";
@@ -37,7 +38,7 @@ export function handleWebviewMessage(
 	msg: Record<string, unknown>,
 	ctx: MessageContext,
 ): MessageResult {
-	if (msg.type !== "terminal-input" && msg.type !== "diag-log") {
+	if (msg.type !== "terminal-input" && msg.type !== "terminal-resize" && msg.type !== "diag-log") {
 		log.log(`webview msg: ${msg.type as string}`);
 	}
 
@@ -58,10 +59,6 @@ export function handleWebviewMessage(
 				keybindings: ctx.getKeybindings(),
 				claudeSettings: readClaudeSettings(ctx.wp),
 				terminalSettings: {
-					shell: termConfig.get<string>("shell", "auto"),
-					shellPath: termConfig.get<string>("shellPath", ""),
-					loginShell: termConfig.get<boolean>("loginShell", true),
-					cleanEnvironment: termConfig.get<boolean>("cleanEnvironment", false),
 					osNotifications: termConfig.get<boolean>("osNotifications", true),
 				},
 			});
@@ -94,7 +91,7 @@ export function handleWebviewMessage(
 		case "lazy-resume": {
 			const lazyClaudeId = msg.claudeId as string;
 			const placeholderPtyId = msg.placeholderPtyId as number;
-			log.log(`lazy-resume: spawning PTY for ${lazyClaudeId.slice(0, 8)}, replacing placeholder pty=${placeholderPtyId}`);
+			fileLog.log("session", `lazy-resume msg`, { claudeId: lazyClaudeId, placeholderPtyId });
 			ctx.sessionMgr.lazyResume(lazyClaudeId, placeholderPtyId);
 			break;
 		}
@@ -220,7 +217,7 @@ export function handleWebviewMessage(
 		case "close-terminal": {
 			const ptyId = msg.sessionId as number;
 			const claudeIdForClose = msg.claudeId as string | undefined;
-			log.log(`close-terminal: pty #${ptyId}, claudeId=${claudeIdForClose || "?"}`);
+			fileLog.log("terminal", `close: pty #${ptyId}`, { claudeId: claudeIdForClose || null });
 			ctx.ptyManager.closeSession(ptyId);
 			if (claudeIdForClose) {
 				ctx.sessionMgr.removeOpenSessionByClaudeId(claudeIdForClose);
@@ -478,8 +475,15 @@ export function handleWebviewMessage(
 			(async () => {
 				for (const absPath of candidates) {
 					try {
-						await vscode.workspace.fs.stat(vscode.Uri.file(absPath));
+						const uri = vscode.Uri.file(absPath);
+						await vscode.workspace.fs.stat(uri);
 						log.log(`open-file-link: found ${absPath}`);
+						const imageExts = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico"];
+						const ext = path.extname(absPath).toLowerCase();
+						if (imageExts.includes(ext)) {
+							await vscode.commands.executeCommand("vscode.open", uri);
+							return;
+						}
 						const doc = await vscode.workspace.openTextDocument(absPath);
 						const editor = await vscode.window.showTextDocument(doc);
 						if (msg.line) {
@@ -499,11 +503,13 @@ export function handleWebviewMessage(
 					}
 				}
 				log.log(`open-file-link: no candidates matched for "${filePath}"`);
+				vscode.window.showWarningMessage(`File not found: ${filePath}`);
 			})();
 			break;
 		}
 
 		case "diag-log":
+			fileLog.log("webview", `[${msg.category as string}] ${msg.message as string}`, msg.data as Record<string, unknown>);
 			if ((msg.category as string) === "links") {
 				log.log(`[webview:links] ${msg.message as string}: ${JSON.stringify(msg.data)}`);
 			}

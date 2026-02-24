@@ -1,9 +1,11 @@
 {
-  "permissions": {
-    "allow": [
-      "Bash(wc:*)",
-      "WebFetch(domain:code.visualstudio.com)",
-      "WebFetch(domain:github.com)"
-    ]
-  }
+	"permissions": {
+		"allow": [
+			"Bash(wc:*)",
+			"WebFetch(domain:code.visualstudio.com)",
+			"WebFetch(domain:github.com)",
+			"WebFetch",
+			"Read"
+		]
+	}
 }

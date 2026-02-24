@@ -2,6 +2,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import * as log from "./log";
+import { fileLog } from "./file-logger";
 import type {
 	INodePty,
 	IPtyProcess,
@@ -9,21 +10,6 @@ import type {
 	PtyDataHandler,
 	PtyExitHandler,
 } from "../types";
-
-const CLEAN_ENV_KEYS = ["PATH", "HOME", "USER", "LANG", "TERM", "SHELL", "TMPDIR", "LOGNAME"];
-
-function resolveShell(setting: string, customPath: string): string {
-	if (setting === "custom" && customPath) return customPath;
-	const isWin = process.platform === "win32";
-	switch (setting) {
-		case "bash": return "/bin/bash";
-		case "zsh": return "/bin/zsh";
-		case "fish": return "/usr/bin/fish";
-		case "powershell": return isWin ? "powershell.exe" : "/usr/bin/pwsh";
-		default: // "auto"
-			return isWin ? "powershell.exe" : process.env.SHELL || "/bin/bash";
-	}
-}
 
 let nodePty: INodePty | null = null;
 
@@ -65,25 +51,14 @@ class PtySession {
 
 		const pty = loadNodePty();
 		const config = vscode.workspace.getConfiguration("claudeCodeReview");
-		const shellSetting = config.get<string>("shell", "auto");
-		const shellPath = config.get<string>("shellPath", "");
-		const loginShell = config.get<boolean>("loginShell", true);
-		const cleanEnv = config.get<boolean>("cleanEnvironment", false);
 		const extraVars = config.get<Record<string, string>>("extraEnvVars", {});
 
-		const shell = resolveShell(shellSetting, shellPath);
+		const isWin = process.platform === "win32";
+		const shell = isWin ? "powershell.exe" : "/bin/bash";
 		const cmd = command || "claude";
-		log.log(`PTY #${id} spawning: shell=${shell}, cmd=${cmd}, cwd=${workspacePath}`);
+		fileLog.log("terminal", `spawning #${id}`, { shell, cmd, cwd: workspacePath });
 
-		let env: Record<string, string | undefined>;
-		if (cleanEnv) {
-			env = {};
-			for (const k of CLEAN_ENV_KEYS) {
-				if (process.env[k]) env[k] = process.env[k];
-			}
-		} else {
-			env = { ...process.env };
-		}
+		const env: Record<string, string | undefined> = { ...process.env };
 
 		// Critical for embedded xterm.js context
 		env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = "false";
@@ -97,17 +72,12 @@ class PtySession {
 		// Apply user extra env vars last (highest priority)
 		Object.assign(env, extraVars);
 
-		log.log(`PTY #${id} created: cmd=${cmd}, cwd=${workspacePath}, login=${loginShell}, clean=${cleanEnv}`);
+		log.log(`PTY #${id} created`);
+		fileLog.log("terminal", `create #${id}`, { cmd, cwd: workspacePath, shell });
 
-		const isFish = shell.includes("fish");
-		let args: string[];
-		if (isFish) {
-			args = loginShell ? ["-l", "-c", cmd] : ["-c", cmd];
-		} else {
-			args = loginShell
-				? ["-l", "-c", `exec ${cmd}`]
-				: ["-c", `exec ${cmd}`];
-		}
+		const args: string[] = isWin
+			? ["-Command", cmd]
+			: ["-l", "-c", `exec ${cmd}`];
 
 		this.process = pty.spawn(shell, args, {
 			name: "xterm-256color",
@@ -117,9 +87,17 @@ class PtySession {
 			env,
 		});
 
-		this.process.onData((data) => onData(this.id, data));
+		let firstData = true;
+		this.process.onData((data) => {
+			if (firstData) {
+				fileLog.log("terminal", `first-data #${id}`, { bytes: data.length });
+				firstData = false;
+			}
+			onData(this.id, data);
+		});
 		this.process.onExit(({ exitCode }) => {
-			log.log(`PTY #${id} exited with code ${exitCode}`);
+			log.log(`PTY #${id} exited: code=${exitCode}`);
+			fileLog.log("terminal", `exit #${id}`, { exitCode });
 			onExit(this.id, exitCode);
 		});
 	}
@@ -131,13 +109,17 @@ class PtySession {
 	resize(cols: number, rows: number): void {
 		try {
 			this.process.resize(cols, rows);
-		} catch {}
+		} catch (err) {
+			fileLog.log("terminal", `resize error #${this.id}`, { error: (err as Error).message });
+		}
 	}
 
 	kill(): void {
 		try {
 			this.process.kill();
-		} catch {}
+		} catch (err) {
+			fileLog.log("terminal", `kill error #${this.id}`, { error: (err as Error).message });
+		}
 	}
 }
 
@@ -182,10 +164,16 @@ export class PtyManager {
 	}
 
 	writeToSession(id: number, data: string): void {
+		if (data.includes("\r") || data.includes("\x1b") || data.includes("\n")) {
+			const hex = [...data].map(c => c.charCodeAt(0).toString(16).padStart(2, "0")).join(" ");
+			fileLog.log("terminal", `write #${id} ENTER`, { hex, len: data.length });
+		}
 		this._sessions.get(id)?.write(data);
 	}
 
 	resizeSession(id: number, cols: number, rows: number): void {
+		if (!cols || !rows || cols < 1 || rows < 1) return;
+		fileLog.log("terminal", `resize #${id}`, { cols, rows });
 		this._sessions.get(id)?.resize(cols, rows);
 	}
 

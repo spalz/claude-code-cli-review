@@ -1,6 +1,11 @@
 // Message router — handles messages from the extension to the webview
+// Depends on: core.js (send, switchMode, showTerminalView, setCurrentFilePath), diag.js (diagLog, diagLogThrottled, getTermBufferState), terminals.js (getTerminals, getActiveTerminalId, addTerminal, removeTerminal, activateTerminal, fitActiveTerminal, renameTerminalTab, annotateFileLinks, closeErrorTerminal, reopenTerminal), sessions.js (renderSessions, updateOpenClaudeIds, findCachedSession, updateArchiveButton, renderArchivedSessions, handleRenameResult), review.js (renderReviewToolbar), settings.js (updateHookUI, updateShortcuts, updateClaudeSettings, updateTerminalSettings, onClaudeSettingsUpdate)
+// Exports: none (self-executing message listener)
 (function () {
 	"use strict";
+
+	var FIT_DELAYS_MS = [100, 300, 800];
+	var RECENT_INPUT_MS = 500;
 
 	window.addEventListener("message", function (event) {
 		var msg = event.data;
@@ -26,8 +31,9 @@
 
 			case "activate-terminal": {
 				diagLog("session", "activate-terminal", {
-					sid: msg.sessionId, exists: getTerminals().has(msg.sessionId),
-					prevActive: getActiveTerminalId()
+					sid: msg.sessionId,
+					exists: getTerminals().has(msg.sessionId),
+					prevActive: getActiveTerminalId(),
 				});
 				var terminals = getTerminals();
 				if (terminals.has(msg.sessionId)) {
@@ -35,8 +41,10 @@
 					if (window.viewMode !== "terminals") {
 						showTerminalView();
 					}
-					[100, 300, 800].forEach(function (ms) {
-						setTimeout(fitActiveTerminal, ms);
+					FIT_DELAYS_MS.forEach(function (ms) {
+						setTimeout(function () {
+							fitActiveTerminal("activate-terminal-msg");
+						}, ms);
 					});
 				}
 				break;
@@ -45,8 +53,10 @@
 			case "terminal-session-created": {
 				var loader = document.getElementById("sessionLoader");
 				diagLog("session", "terminal-session-created", {
-					sid: msg.sessionId, name: msg.name, claudeId: msg.claudeId,
-					loaderVisible: !!loader
+					sid: msg.sessionId,
+					name: msg.name,
+					claudeId: msg.claudeId,
+					loaderVisible: !!loader,
 				});
 				if (loader) loader.remove();
 				addTerminal(msg.sessionId, msg.name, msg.claudeId, msg.restoring, msg.lazy);
@@ -65,7 +75,8 @@
 						if (span) span.textContent = s.title;
 					}
 					diagLog("terminal", "claude-id-updated", {
-						sid: msg.sessionId, claudeId: msg.claudeId
+						sid: msg.sessionId,
+						claudeId: msg.claudeId,
 					});
 				}
 				break;
@@ -93,29 +104,51 @@
 						if (/\x1b\[\??(25|1049|2004)|(\x1b\[H\x1b\[2J)/.test(msg.data)) {
 							t.loadingOverlay.remove();
 							t.loadingOverlay = null;
-							t.term.write(window.annotateFileLinks(msg.data));
 						} else {
-							// Pre-TUI text — show in skeleton status, don't write to terminal
-							var plain = msg.data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/[\x00-\x1f]/g, " ").trim();
+							// Pre-TUI text — show in skeleton status
+							var plain = msg.data
+								.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
+								.replace(/[\x00-\x1f]/g, " ")
+								.trim();
 							if (plain) {
 								var statusEl = t.loadingOverlay.querySelector(".sk-status");
 								if (statusEl) statusEl.textContent = plain.slice(0, 80);
 							}
 						}
+						// Always write to terminal buffer (visible after overlay removed)
+						t.term.write(window.annotateFileLinks(msg.data));
 						break;
 					}
 					var before = getTermBufferState(t);
 					var buf = t.term.buffer.active;
 					var wasAtBottom = buf.viewportY >= buf.baseY;
+					var recentInput = t.lastInputTime && Date.now() - t.lastInputTime < RECENT_INPUT_MS;
 					t.term.write(window.annotateFileLinks(msg.data));
-					if (wasAtBottom) {
+					var didScroll = wasAtBottom || recentInput;
+					if (didScroll) {
 						t.term.scrollToBottom();
 					}
 					var after = getTermBufferState(t);
-					diagLogThrottled("output", "write+scrollToBottom", {
-						sid: msg.sessionId, len: msg.data.length,
-						before: before, after: after
-					});
+					var jumped =
+						!didScroll && before && after && before.viewportY !== after.viewportY;
+					if (jumped) {
+						diagLog("scroll-diag", "OUTPUT-VIEWPORT-JUMP", {
+							sid: msg.sessionId,
+							len: msg.data.length,
+							before: before,
+							after: after,
+							wasAtBottom: wasAtBottom,
+							recentInput: !!recentInput,
+						});
+					} else {
+						diagLogThrottled("output", "write", {
+							sid: msg.sessionId,
+							len: msg.data.length,
+							before: before,
+							after: after,
+							didScroll: didScroll,
+						});
+					}
 				}
 				break;
 			}
@@ -123,8 +156,9 @@
 			case "terminal-exit": {
 				var te = getTerminals().get(msg.sessionId);
 				diagLog("session", "terminal-exit", {
-					sid: msg.sessionId, exitCode: msg.exitCode,
-					buf: te ? getTermBufferState(te) : null
+					sid: msg.sessionId,
+					exitCode: msg.exitCode,
+					buf: te ? getTermBufferState(te) : null,
 				});
 				if (te) {
 					te.term.write("\r\n[Process exited with code " + msg.exitCode + "]\r\n");
@@ -143,7 +177,10 @@
 					closeBtn.setAttribute("secondary", "");
 					closeBtn.textContent = "Close";
 					closeBtn.onclick = function () {
-						send("close-terminal", { sessionId: msg.sessionId, claudeId: te.claudeId || null });
+						send("close-terminal", {
+							sessionId: msg.sessionId,
+							claudeId: te.claudeId || null,
+						});
 					};
 					bar.appendChild(closeBtn);
 					te.container.appendChild(bar);
@@ -227,7 +264,20 @@
 						}
 					}
 					setCurrentFilePath(activeFile);
+					var activeId = getActiveTerminalId();
+					var stBefore = activeId
+						? getTermBufferState(getTerminals().get(activeId))
+						: null;
 					renderReviewToolbar(msg.review);
+					var stAfter = activeId
+						? getTermBufferState(getTerminals().get(activeId))
+						: null;
+					if (stBefore && stAfter && stBefore.viewportY !== stAfter.viewportY) {
+						diagLog("scroll-diag", "state-update-JUMP", {
+							before: stBefore,
+							after: stAfter,
+						});
+					}
 				}
 				break;
 
@@ -249,7 +299,9 @@
 						activateTerminal(msg.realPtyId);
 					}
 					diagLog("terminal", "lazy-ready", {
-						placeholder: msg.placeholderPtyId, real: msg.realPtyId, claudeId: msg.claudeId
+						placeholder: msg.placeholderPtyId,
+						real: msg.realPtyId,
+						claudeId: msg.claudeId,
 					});
 				}
 				break;
@@ -272,7 +324,11 @@
 			}
 
 			case "restore-view-mode":
-				if (msg.mode === "terminals" && window._hasOpenSessions && window._hasOpenSessions()) {
+				if (
+					msg.mode === "terminals" &&
+					window._hasOpenSessions &&
+					window._hasOpenSessions()
+				) {
 					switchMode("terminals", true);
 					window._sessionsRestored = true;
 					send("request-restore-sessions");
@@ -283,7 +339,6 @@
 			case "show-onboarding":
 				showOnboarding(msg);
 				break;
-
 		}
 	});
 

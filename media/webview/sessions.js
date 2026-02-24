@@ -1,4 +1,6 @@
 // Sessions list rendering, context menu, inline rename, popup
+// Depends on: core.js (send, switchMode, showTerminalView)
+// Exports: window.{renderSessions, updateOpenClaudeIds, findCachedSession, setActiveClaudeId, updateArchiveButton, renderArchivedSessions, handleRenameResult, _hasOpenSessions}
 (function () {
 	"use strict";
 
@@ -27,15 +29,22 @@
 	};
 
 	window.findCachedSession = function (claudeId) {
-		return cachedSessions.find(function (x) { return x.id === claudeId; })
-			|| cachedArchivedSessions.find(function (x) { return x.id === claudeId; });
+		return (
+			cachedSessions.find(function (x) {
+				return x.id === claudeId;
+			}) ||
+			cachedArchivedSessions.find(function (x) {
+				return x.id === claudeId;
+			})
+		);
 	};
 
 	// --- Sessions rendering ---
 
 	window.renderSessions = function (sessions) {
 		if (sessions) cachedSessions = sessions;
-		if (sessions && window.diagLog) diagLog("session", "renderSessions", { count: sessions.length });
+		if (sessions && window.diagLog)
+			diagLog("session", "renderSessions", { count: sessions.length });
 		var el = document.getElementById("sessionsList");
 		if (!cachedSessions || cachedSessions.length === 0) {
 			el.innerHTML =
@@ -60,7 +69,12 @@
 			var isRenaming = s.id === renamingId;
 			var dotClass = isOpen ? (isLazy ? "lazy" : "active") : "past";
 			html +=
-				'<div class="session-item' + (isActive ? " open" : "") + (isRenaming ? " renaming" : "") + '" data-sid="' + s.id + '">';
+				'<div class="session-item' +
+				(isActive ? " open" : "") +
+				(isRenaming ? " renaming" : "") +
+				'" data-sid="' +
+				s.id +
+				'">';
 			html += '<span class="dot ' + dotClass + '"></span>';
 			html += '<div class="info"><div class="session-title">' + esc(s.title) + "</div>";
 			html +=
@@ -113,7 +127,12 @@
 			return x.id === sessionId;
 		});
 		var isOpen = openClaudeIds.has(sessionId);
-		ctxTarget = { sessionId: sessionId, title: s ? s.title : "", isOpen: isOpen, isArchived: !!isArchived };
+		ctxTarget = {
+			sessionId: sessionId,
+			title: s ? s.title : "",
+			isOpen: isOpen,
+			isArchived: !!isArchived,
+		};
 
 		var menu = document.getElementById("ctxMenu");
 		var items = [];
@@ -284,9 +303,10 @@
 	function showSessionLoader(reason) {
 		var existing = document.getElementById("sessionLoader");
 		if (existing) return;
-		var parent = window.viewMode === "terminals"
-			? document.getElementById("terminalView")
-			: document.getElementById("sessionsView");
+		var parent =
+			window.viewMode === "terminals"
+				? document.getElementById("terminalView")
+				: document.getElementById("sessionsView");
 		if (!parent) return;
 		var loader = document.createElement("div");
 		loader.className = "loading-bar";
@@ -340,7 +360,8 @@
 			list.style.display = "";
 			arrow.classList.add("open");
 			if (!archiveLoaded) {
-				list.innerHTML = '<div class="empty" style="padding:12px;font-size:12px">Loading...</div>';
+				list.innerHTML =
+					'<div class="empty" style="padding:12px;font-size:12px">Loading...</div>';
 				send("load-archived-sessions");
 				archiveLoaded = true;
 			}
@@ -356,7 +377,8 @@
 		if (sessions) cachedArchivedSessions = sessions;
 		var list = document.getElementById("archiveList");
 		if (!sessions || sessions.length === 0) {
-			list.innerHTML = '<div class="empty" style="padding:12px;font-size:12px">No archived sessions</div>';
+			list.innerHTML =
+				'<div class="empty" style="padding:12px;font-size:12px">No archived sessions</div>';
 			return;
 		}
 		list.innerHTML = buildSessionListHtml(sessions);
@@ -372,5 +394,4 @@
 		// Reset loaded flag so next toggle will reload fresh data
 		archiveLoaded = true;
 	};
-
 })();

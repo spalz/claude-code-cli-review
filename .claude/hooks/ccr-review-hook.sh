@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# Claude Code Review — PostToolUse hook v8.1
+# Claude Code Review — PostToolUse hook v8.2
 # Managed by Claude Code Review extension. Do not edit manually.
 
 LOG="/tmp/ccr-hook.log"
 echo "[ccr-hook] $(date +%H:%M:%S) --- post hook invoked ---" >> "$LOG"
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-CCR_PORT=$(cat "$HOOK_DIR/../ccr-port" 2>/dev/null || echo 27182)
+CCR_PORT_FILE="$HOOK_DIR/../ccr-port"
+if [[ ! -f "$CCR_PORT_FILE" ]]; then
+  echo "[ccr-hook] $(date +%H:%M:%S) skip: no ccr-port file (VS Code not running?)" >> "$LOG"
+  exit 0
+fi
+CCR_PORT=$(cat "$CCR_PORT_FILE")
 echo "[ccr-hook] $(date +%H:%M:%S) port=$CCR_PORT" >> "$LOG"
 
 INPUT=$(cat)

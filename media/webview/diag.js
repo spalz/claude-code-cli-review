@@ -1,5 +1,7 @@
 // Diagnostic logging — bridge webview logs to extension Output channel
 // Tag: [scroll-diag] — filter in Output to see only diagnostics
+// Depends on: core.js (send)
+// Exports: window.{diagLog, diagLogThrottled, diagHex, getTermBufferState}
 (function () {
 	"use strict";
 
@@ -20,6 +22,14 @@
 			delete throttleTimers[category];
 		}, 250);
 		window.diagLog(category, message, data);
+	};
+
+	window.diagHex = function (str) {
+		var hex = [];
+		for (var i = 0; i < str.length; i++) {
+			hex.push(str.charCodeAt(i).toString(16).padStart(2, "0"));
+		}
+		return hex.join(" ");
 	};
 
 	window.getTermBufferState = function (termEntry) {

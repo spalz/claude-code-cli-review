@@ -1,4 +1,6 @@
 // Review toolbar rendering — compact toolbar replacing the old review panel
+// Depends on: core.js (send)
+// Exports: window.{renderReviewToolbar, setCurrentFilePath}
 (function () {
 	"use strict";
 
@@ -77,6 +79,12 @@
 		if (!data) return;
 
 		var toolbar = document.getElementById("reviewToolbar");
+		var terminalsArea = document.getElementById("terminalsArea");
+		var layoutBefore = {
+			toolbarDisplay: toolbar.style.display,
+			toolbarH: toolbar.offsetHeight,
+			areaH: terminalsArea ? terminalsArea.clientHeight : 0,
+		};
 		var remaining = data.remaining;
 		var total = data.total;
 		var unresolvedHunks = data.unresolvedHunks;
@@ -148,12 +156,7 @@
 			html +=
 				'<button class="toolbar-btn" data-action="prev-file" title="Previous file">\u25C0</button>';
 		}
-		html +=
-			'<span class="toolbar-label">' +
-			(currentFileIndex + 1) +
-			"/" +
-			total +
-			"</span>";
+		html += '<span class="toolbar-label">' + (currentFileIndex + 1) + "/" + total + "</span>";
 		if (total > 1) {
 			html +=
 				'<button class="toolbar-btn" data-action="next-file" title="Next file">\u25B6</button>';
@@ -172,6 +175,23 @@
 		html += "</div>";
 
 		toolbar.innerHTML = html;
+
+		// Check if layout changed (could cause viewport jump)
+		var layoutAfter = {
+			toolbarDisplay: toolbar.style.display,
+			toolbarH: toolbar.offsetHeight,
+			areaH: terminalsArea ? terminalsArea.clientHeight : 0,
+		};
+		if (
+			layoutBefore.toolbarDisplay !== layoutAfter.toolbarDisplay ||
+			layoutBefore.toolbarH !== layoutAfter.toolbarH ||
+			layoutBefore.areaH !== layoutAfter.areaH
+		) {
+			diagLog("scroll-diag", "toolbar-LAYOUT", {
+				before: layoutBefore,
+				after: layoutAfter,
+			});
+		}
 	};
 	// Toolbar more menu — uses vscode-context-menu
 	var toolbarCtxMenu = null;
@@ -188,9 +208,12 @@
 						send("reject-all-confirm");
 					});
 				} else if (val === "dismiss-all") {
-					showConfirm("Dismiss all reviews? Files will keep Claude's changes.", function () {
-						send("dismiss-all-confirm");
-					});
+					showConfirm(
+						"Dismiss all reviews? Files will keep Claude's changes.",
+						function () {
+							send("dismiss-all-confirm");
+						},
+					);
 				}
 			});
 		}
@@ -208,7 +231,7 @@
 			{ label: "Reject all changes", value: "reject-all" },
 			{ label: "Dismiss all reviews", value: "dismiss-all" },
 		];
-		menu.style.left = (rect.right - 160) + "px";
+		menu.style.left = rect.right - 160 + "px";
 		menu.style.top = rect.bottom + "px";
 		menu.show = true;
 	}

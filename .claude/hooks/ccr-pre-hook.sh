@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code Review — PreToolUse hook v8.1
+# Claude Code Review — PreToolUse hook v8.2
 # Managed by Claude Code Review extension. Do not edit manually.
 # Captures file content BEFORE Claude modifies it.
 
@@ -7,7 +7,12 @@ LOG="/tmp/ccr-hook.log"
 echo "[ccr-pre-hook] $(date +%H:%M:%S) --- pre hook invoked ---" >> "$LOG"
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-CCR_PORT=$(cat "$HOOK_DIR/../ccr-port" 2>/dev/null || echo 27182)
+CCR_PORT_FILE="$HOOK_DIR/../ccr-port"
+if [[ ! -f "$CCR_PORT_FILE" ]]; then
+  echo "[ccr-pre-hook] $(date +%H:%M:%S) skip: no ccr-port file" >> "$LOG"
+  exit 0
+fi
+CCR_PORT=$(cat "$CCR_PORT_FILE")
 echo "[ccr-pre-hook] $(date +%H:%M:%S) port=$CCR_PORT" >> "$LOG"
 
 INPUT=$(cat)
