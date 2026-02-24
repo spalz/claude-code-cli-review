@@ -248,10 +248,17 @@
 					"description": "CLI command for Claude sessions",
 					"scope": "window"
 				},
-				"claudeCodeReview.osNotifications": {
-					"type": "boolean",
-					"default": true,
-					"description": "Show OS notifications when Claude needs attention and editor is unfocused.",
+				"claudeCodeReview.notificationMode": {
+					"type": "string",
+					"default": "notifications_sound",
+					"enum": ["notifications_sound", "sound_only", "notifications_only", "disabled"],
+					"enumDescriptions": [
+						"OS notifications and sound alert",
+						"Sound alert only",
+						"OS notifications only",
+						"Disabled"
+					],
+					"description": "How to alert when Claude needs attention and editor is unfocused",
 					"scope": "window"
 				},
 				"claudeCodeReview.extraEnvVars": {

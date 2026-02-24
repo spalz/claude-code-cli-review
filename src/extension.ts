@@ -7,7 +7,7 @@ import { PtyManager } from "./lib/pty-manager";
 import { applyDecorations, clearDecorations, initDecorations } from "./lib/decorations";
 import * as fs from "fs";
 import * as path from "path";
-import { startServer, stopServer, setAddFileHandler, setWorkspacePath, setGetActiveReviewHandler } from "./lib/server";
+import { startServer, stopServer, setAddFileHandler, setWorkspacePath, setGetActiveReviewHandler, setGetActiveSessionHandler, setPostWebviewMessageHandler } from "./lib/server";
 import { checkAndPrompt, doInstall } from "./lib/hooks";
 import { ReviewManager } from "./lib/review-manager";
 import { registerDocumentListener } from "./lib/document-listener";
@@ -16,7 +16,7 @@ import * as actions from "./lib/actions";
 import * as log from "./lib/log";
 import { fileLog } from "./lib/file-logger";
 import { clearReviewState } from "./lib/persistence";
-import type { HookStatus } from "./types";
+import type { HookStatus, ExtensionToWebviewMessage } from "./types";
 
 let reviewManager: ReviewManager | undefined;
 
@@ -278,11 +278,13 @@ export function activate(context: vscode.ExtensionContext): void {
 		);
 
 		// --- HTTP server + hook bridge ---
-		setAddFileHandler((filePath) => {
-			void reviewManager!.addFile(filePath);
+		setAddFileHandler((filePath, sessionId) => {
+			void reviewManager!.addFile(filePath, sessionId);
 		});
 		setWorkspacePath(workspacePath);
 		setGetActiveReviewHandler((filePath) => state.activeReviews.get(filePath));
+		setGetActiveSessionHandler(() => context.workspaceState.get<string>("ccr.activeSession"));
+		setPostWebviewMessageHandler((msg) => mainView.postMessageDirect(msg as ExtensionToWebviewMessage));
 
 		const portFilePath = path.join(workspacePath, ".claude", "ccr-port");
 		startServer().then((port) => {

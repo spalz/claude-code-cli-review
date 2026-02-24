@@ -36,17 +36,17 @@
 		send("open-keybindings");
 	});
 
-	// --- OS Notifications toggle ---
-	var tsOsNotif = document.getElementById("ts_osNotifications");
-	if (tsOsNotif) {
-		tsOsNotif.addEventListener("change", function () {
-			send("set-terminal-setting", { key: "osNotifications", value: this.checked });
+	// --- Notification mode select ---
+	var tsNotifMode = document.getElementById("ts_notificationMode");
+	if (tsNotifMode) {
+		tsNotifMode.addEventListener("change", function () {
+			send("set-terminal-setting", { key: "notificationMode", value: this.value });
 		});
 	}
 
 	window.updateTerminalSettings = function (data) {
 		if (!data) return;
-		if (tsOsNotif) tsOsNotif.checked = data.osNotifications !== false;
+		if (tsNotifMode && data.notificationMode) tsNotifMode.value = data.notificationMode;
 	};
 
 	// --- Scope toggle ---

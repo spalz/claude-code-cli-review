@@ -6,6 +6,7 @@ export interface ReviewFileInfo {
 	done: boolean;
 	unresolved: number;
 	total: number;
+	sessionId?: string;
 }
 
 export interface ReviewStateUpdate {

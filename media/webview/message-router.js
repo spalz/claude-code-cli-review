@@ -418,8 +418,42 @@
 			case "show-onboarding":
 				showOnboarding(msg);
 				break;
+
+			case "play-notification-sound":
+				playNotificationSound();
+				break;
 		}
 	});
+
+	// --- Notification sound via Web Audio API ---
+	function playNotificationSound() {
+		try {
+			var ctx = new (window.AudioContext || window.webkitAudioContext)();
+			var now = ctx.currentTime;
+
+			// Two-tone chime: 880Hz → 1047Hz
+			var freqs = [880, 1047];
+			var duration = 0.15;
+
+			freqs.forEach(function (freq, i) {
+				var osc = ctx.createOscillator();
+				var gain = ctx.createGain();
+				osc.type = "sine";
+				osc.frequency.value = freq;
+				gain.gain.setValueAtTime(0.3, now + i * duration);
+				gain.gain.exponentialRampToValueAtTime(0.001, now + i * duration + duration);
+				osc.connect(gain);
+				gain.connect(ctx.destination);
+				osc.start(now + i * duration);
+				osc.stop(now + i * duration + duration);
+			});
+
+			// Close context after sound completes
+			setTimeout(function () { ctx.close(); }, 500);
+		} catch (e) {
+			// Web Audio API not available — silently ignore
+		}
+	}
 
 	// Signal extension that webview JS is ready
 	send("webview-ready");

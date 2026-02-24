@@ -12,7 +12,7 @@ import { initHistory } from "../undo-history";
 import type { ChangeType } from "../../types";
 import type { ReviewManagerInternal } from "./types";
 
-export async function addFile(mgr: ReviewManagerInternal, absFilePath: string): Promise<void> {
+export async function addFile(mgr: ReviewManagerInternal, absFilePath: string, sessionId?: string): Promise<void> {
 	fileLog.log("review", `addFile: ${absFilePath}`);
 
 	// Read modified content from disk
@@ -21,7 +21,7 @@ export async function addFile(mgr: ReviewManagerInternal, absFilePath: string): 
 		modifiedContent = fs.readFileSync(absFilePath, "utf8");
 	} catch {
 		// File doesn't exist — possibly deleted via Bash rm
-		await handleMissingFile(mgr, absFilePath);
+		await handleMissingFile(mgr, absFilePath, sessionId);
 		return;
 	}
 
@@ -71,6 +71,7 @@ export async function addFile(mgr: ReviewManagerInternal, absFilePath: string): 
 	);
 	review.mergedLines = lines;
 	review.hunkRanges = ranges;
+	review.sessionId = sessionId;
 	state.activeReviews.set(absFilePath, review);
 
 	if (!mgr.reviewFiles.includes(absFilePath)) {
@@ -91,20 +92,20 @@ export async function addFile(mgr: ReviewManagerInternal, absFilePath: string): 
 	mgr.refreshUI();
 
 	log.log(
-		`ReviewManager.addFile: added ${absFilePath}, ${hunks.length} hunks, type=${changeType}`,
+		`ReviewManager.addFile: added ${absFilePath}, ${hunks.length} hunks, type=${changeType}, session=${sessionId ?? "none"}`,
 	);
 	mgr.scheduleSave();
 	mgr._onReviewStateChange.fire(true);
 }
 
-export async function handleMissingFile(mgr: ReviewManagerInternal, absFilePath: string): Promise<void> {
+export async function handleMissingFile(mgr: ReviewManagerInternal, absFilePath: string, sessionId?: string): Promise<void> {
 	// Try to find original content from snapshot or existing review
 	const snapshot = getSnapshot(absFilePath);
 	const existingOrig = state.activeReviews.get(absFilePath)?.originalContent;
 	const origContent = snapshot ?? existingOrig;
 
 	if (origContent) {
-		await handleDeletion(mgr, absFilePath, origContent);
+		await handleDeletion(mgr, absFilePath, origContent, sessionId);
 		return;
 	}
 
@@ -118,7 +119,7 @@ export async function handleMissingFile(mgr: ReviewManagerInternal, absFilePath:
 				timeout: 5000,
 				stdio: "pipe",
 			});
-			await handleDeletion(mgr, absFilePath, gitContent);
+			await handleDeletion(mgr, absFilePath, gitContent, sessionId);
 			return;
 		}
 	} catch {}
@@ -126,7 +127,7 @@ export async function handleMissingFile(mgr: ReviewManagerInternal, absFilePath:
 	log.log(`ReviewManager.addFile: cannot read ${absFilePath}`);
 }
 
-export async function handleDeletion(mgr: ReviewManagerInternal, absFilePath: string, originalContent: string): Promise<void> {
+export async function handleDeletion(mgr: ReviewManagerInternal, absFilePath: string, originalContent: string, sessionId?: string): Promise<void> {
 	// Remove old review if present
 	if (state.activeReviews.has(absFilePath)) {
 		state.activeReviews.delete(absFilePath);
@@ -147,6 +148,7 @@ export async function handleDeletion(mgr: ReviewManagerInternal, absFilePath: st
 	};
 
 	const review = new FileReview(absFilePath, originalContent, "", [hunk], "delete");
+	review.sessionId = sessionId;
 	// For delete reviews, merged content is empty (all lines removed, nothing added).
 	// Hover-based approach: removed lines shown via hover, buffer stays empty.
 	const { lines, ranges } = buildMergedContent([], [hunk]);

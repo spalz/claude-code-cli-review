@@ -26,6 +26,7 @@ export async function restore(mgr: ReviewManagerInternal): Promise<boolean> {
 			pf.hunks,
 			pf.changeType,
 		);
+		review.sessionId = pf.sessionId;
 		// For delete reviews, modifiedContent is "" — use empty array to match handleDeletion behavior
 		const modLines = pf.changeType === "delete" ? [] : pf.modifiedContent.split("\n");
 		const { lines, ranges } = buildMergedContent(modLines, pf.hunks);

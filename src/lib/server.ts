@@ -11,15 +11,21 @@ import { parseBashCommand } from "./bash-file-parser";
 const DEFAULT_PORT = 27182;
 let server: http.Server | null = null;
 let serverPort = 0;
-let _addFileToReview: ((filePath: string) => void) | null = null;
+let _addFileToReview: ((filePath: string, sessionId?: string) => void) | null = null;
+let _getActiveSessionId: (() => string | undefined) | null = null;
 let _workspacePath: string | undefined;
 let _getActiveReview: ((filePath: string) => import("../types").IFileReview | undefined) | null = null;
+let _postWebviewMessage: ((msg: { type: string }) => void) | null = null;
 
 // Before-content snapshots from PreToolUse hook
 const beforeSnapshots = new Map<string, string>();
 
-export function setAddFileHandler(fn: (filePath: string) => void): void {
+export function setAddFileHandler(fn: (filePath: string, sessionId?: string) => void): void {
 	_addFileToReview = fn;
+}
+
+export function setGetActiveSessionHandler(fn: () => string | undefined): void {
+	_getActiveSessionId = fn;
 }
 
 export function setWorkspacePath(wp: string): void {
@@ -28,6 +34,10 @@ export function setWorkspacePath(wp: string): void {
 
 export function setGetActiveReviewHandler(fn: (filePath: string) => import("../types").IFileReview | undefined): void {
 	_getActiveReview = fn;
+}
+
+export function setPostWebviewMessageHandler(fn: (msg: { type: string }) => void): void {
+	_postWebviewMessage = fn;
 }
 
 export function getSnapshot(filePath: string): string | undefined {
@@ -133,13 +143,14 @@ function createServer(): http.Server {
 				try {
 					const data = JSON.parse(body) as { file?: string; tool?: string; command?: string };
 					fileLog.log("server", `/changed`, { tool: data.tool, file: data.file, command: data.command?.slice(0, 100) });
+					const activeSession = _getActiveSessionId?.();
 					if (data.tool === "Bash" && data.command) {
 						const changes = parseBashCommand(data.command, _workspacePath);
 						for (const file of [...changes.modified, ...changes.deleted]) {
-							if (_addFileToReview) _addFileToReview(file);
+							if (_addFileToReview) _addFileToReview(file, activeSession);
 						}
 					} else if (data.file && _addFileToReview) {
-						_addFileToReview(data.file);
+						_addFileToReview(data.file, activeSession);
 					}
 				} catch (err) {
 					log.log(`/changed error: ${(err as Error).message}`);
@@ -149,19 +160,26 @@ function createServer(): http.Server {
 			return;
 		}
 
-		// Notification endpoint — show OS notification only when editor is unfocused
+		// Notification endpoint — alert based on notificationMode setting
 		if (req.method === "POST" && req.url === "/notify") {
 			readBody(req, (body) => {
 				try {
 					const data = JSON.parse(body) as { title?: string; message?: string };
 					const title = data.title || "Claude Code Review";
 					const message = data.message || "Claude Code needs your attention";
-					log.log(`/notify: title="${title}" message="${message}" focused=${vscode.window.state.focused}`);
-					const notifEnabled = vscode.workspace
+					const mode = vscode.workspace
 						.getConfiguration("claudeCodeReview")
-						.get<boolean>("osNotifications", true);
-					if (notifEnabled && !vscode.window.state.focused) {
-						sendOsNotification(title, message);
+						.get<string>("notificationMode", "notifications_sound");
+					log.log(`/notify: title="${title}" message="${message}" focused=${vscode.window.state.focused} mode=${mode}`);
+					if (mode !== "disabled") {
+						const wantsNotif = mode === "notifications_sound" || mode === "notifications_only";
+						const wantsSound = mode === "notifications_sound" || mode === "sound_only";
+						if (wantsNotif && !vscode.window.state.focused) {
+							sendOsNotification(title, message);
+						}
+						if (wantsSound) {
+							_postWebviewMessage?.({ type: "play-notification-sound" });
+						}
 					}
 				} catch (err) {
 					log.log(`/notify error: ${(err as Error).message}`);

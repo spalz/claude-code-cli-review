@@ -105,8 +105,13 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
         <vscode-button id="hookActionBtn" style="display:none">Install</vscode-button>
       </div>
       <div class="settings-row">
-        <span class="label">OS notifications</span>
-        <vscode-checkbox id="ts_osNotifications" checked></vscode-checkbox>
+        <span class="label">Notifications</span>
+        <vscode-single-select id="ts_notificationMode">
+          <vscode-option value="notifications_sound">Notifications + Sound</vscode-option>
+          <vscode-option value="sound_only">Sound only</vscode-option>
+          <vscode-option value="notifications_only">Notifications only</vscode-option>
+          <vscode-option value="disabled">Disabled</vscode-option>
+        </vscode-single-select>
       </div>
     </div>
     <div class="settings-section">

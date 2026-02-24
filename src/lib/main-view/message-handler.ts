@@ -120,7 +120,7 @@ export function handleWebviewMessage(
 				keybindings: ctx.getKeybindings(),
 				claudeSettings: readClaudeSettings(ctx.wp),
 				terminalSettings: {
-					osNotifications: termConfig.get<boolean>("osNotifications", true),
+					notificationMode: termConfig.get<string>("notificationMode", "notifications_sound"),
 				},
 			});
 			if (pendingHookStatus) {

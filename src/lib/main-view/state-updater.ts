@@ -65,6 +65,7 @@ export function buildStateUpdate(
 			done: !r,
 			unresolved: r ? r.unresolvedCount : 0,
 			total: r ? r.hunks.length : 0,
+			sessionId: r?.sessionId,
 		};
 	});
 

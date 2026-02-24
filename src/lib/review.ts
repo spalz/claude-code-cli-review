@@ -11,6 +11,7 @@ export class FileReview implements IFileReview {
 	hunkRanges: HunkRange[] = [];
 	mergedApplied = false;
 	changeType: ChangeType;
+	sessionId?: string;
 
 	constructor(
 		public readonly filePath: string,

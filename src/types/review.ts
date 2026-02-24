@@ -34,6 +34,7 @@ export interface IFileReview {
 	mergedLines: string[];
 	hunkRanges: HunkRange[];
 	mergedApplied?: boolean;
+	sessionId?: string;
 	readonly unresolvedCount: number;
 	readonly isFullyResolved: boolean;
 }
@@ -51,6 +52,7 @@ export interface PersistedFileReview {
 	modifiedContent: string;
 	hunks: Hunk[];
 	changeType: ChangeType;
+	sessionId?: string;
 }
 
 export interface ReviewSnapshot {
@@ -58,6 +60,7 @@ export interface ReviewSnapshot {
 	originalContent: string;
 	modifiedContent: string;
 	changeType: ChangeType;
+	sessionId?: string;
 	hunks: Hunk[];
 	mergedLines: string[];
 	hunkRanges: HunkRange[];

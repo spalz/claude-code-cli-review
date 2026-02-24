@@ -121,6 +121,10 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 		this._sendStateUpdate();
 	}
 
+	postMessageDirect(msg: ExtensionToWebviewMessage): void {
+		this._postMessage(msg);
+	}
+
 	private _sendStateUpdate(): void {
 		const t0 = performance.now();
 		const payload = buildStateUpdate(this._wp, this._ptyManager, this._reviewManager);

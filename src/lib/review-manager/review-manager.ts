@@ -70,7 +70,7 @@ export class ReviewManager implements vscode.Disposable {
 	}
 
 	// --- File addition ---
-	async addFile(absFilePath: string): Promise<void> { await addFileImpl(this.internal, absFilePath); }
+	async addFile(absFilePath: string, sessionId?: string): Promise<void> { await addFileImpl(this.internal, absFilePath, sessionId); }
 
 	// --- Content validation ---
 	async ensureMergedContent(filePath: string): Promise<void> {

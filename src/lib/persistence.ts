@@ -24,6 +24,7 @@ export function saveReviewState(
 			modifiedContent: review.modifiedContent,
 			hunks: review.hunks,
 			changeType: review.changeType,
+			sessionId: review.sessionId,
 		});
 	}
 
