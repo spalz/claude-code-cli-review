@@ -3,8 +3,9 @@ import * as path from "path";
 import * as os from "os";
 
 export function getProjectKey(workspacePath: string): string {
-	// Claude CLI encodes paths: /Users/spals/projects/foo → -Users-spals-projects-foo
-	return workspacePath.replace(/\//g, "-").replace(/^-/, "-");
+	// Claude CLI encodes paths: /Users/spals/projects/foo_bar → -Users-spals-projects-foo-bar
+	// Both "/" and "_" are replaced with "-"
+	return workspacePath.replace(/[/_]/g, "-").replace(/^-/, "-");
 }
 
 export function getSessionsDir(workspacePath: string): string {

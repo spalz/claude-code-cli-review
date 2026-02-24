@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Claude Code Review — PostToolUse hook v8.0
+# Claude Code Review — PostToolUse hook v8.1
 # Managed by Claude Code Review extension. Do not edit manually.
 
 LOG="/tmp/ccr-hook.log"
 echo "[ccr-hook] $(date +%H:%M:%S) --- post hook invoked ---" >> "$LOG"
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+CCR_PORT=$(cat "$HOOK_DIR/../ccr-port" 2>/dev/null || echo 27182)
+echo "[ccr-hook] $(date +%H:%M:%S) port=$CCR_PORT" >> "$LOG"
 
 INPUT=$(cat)
 echo "[ccr-hook] $(date +%H:%M:%S) raw input: $INPUT" >> "$LOG"
@@ -20,7 +24,7 @@ if [[ "$TOOL_NAME" == "Edit" || "$TOOL_NAME" == "Write" ]]; then
   fi
   RESPONSE=$(curl -sf -w "\n%{http_code}" -X POST -H "Content-Type: application/json" \
     -d "{\"file\":\"$FILE_PATH\",\"tool\":\"$TOOL_NAME\"}" \
-    http://127.0.0.1:27182/changed 2>&1)
+    http://127.0.0.1:$CCR_PORT/changed 2>&1)
   CURL_EXIT=$?
   echo "[ccr-hook] $(date +%H:%M:%S) curl exit=$CURL_EXIT response=$RESPONSE" >> "$LOG"
 elif [[ "$TOOL_NAME" == "Bash" ]]; then
@@ -30,7 +34,7 @@ import sys,json
 d=json.load(sys.stdin)
 cmd=d.get('tool_input',{}).get('command','')
 print(json.dumps({'tool':'Bash','command':cmd}))
-" 2>/dev/null | curl -sf -X POST -H "Content-Type: application/json" -d @- http://127.0.0.1:27182/changed >/dev/null 2>&1
+" 2>/dev/null | curl -sf -X POST -H "Content-Type: application/json" -d @- http://127.0.0.1:$CCR_PORT/changed >/dev/null 2>&1
 else
   echo "[ccr-hook] $(date +%H:%M:%S) skip: tool is not Edit/Write/Bash" >> "$LOG"
 fi

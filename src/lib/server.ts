@@ -195,7 +195,6 @@ export function startServer(): Promise<number> {
 		server.on("error", (err: NodeJS.ErrnoException) => {
 			if (err.code === "EADDRINUSE" && !resolved) {
 				log.log(`port ${DEFAULT_PORT} busy, falling back to random port`);
-				// Remove stale 'listening' listener from the failed listen() call
 				server!.removeAllListeners("listening");
 				server!.listen(0, "127.0.0.1", () => {
 					const addr = server!.address() as { port: number };

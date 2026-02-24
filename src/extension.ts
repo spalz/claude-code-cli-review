@@ -14,6 +14,7 @@ import { registerDocumentListener } from "./lib/document-listener";
 import { clearAllHistories } from "./lib/undo-history";
 import * as actions from "./lib/actions";
 import * as log from "./lib/log";
+import { clearReviewState } from "./lib/persistence";
 import type { HookStatus } from "./types";
 
 let reviewManager: ReviewManager | undefined;
@@ -167,7 +168,28 @@ export function activate(context: vscode.ExtensionContext): void {
 					}
 				},
 			],
-			["ccr.undo", () => reviewManager?.undoResolve()],
+			[
+				"ccr.dismissAll",
+				() => {
+					if (!reviewManager) return;
+					log.log(`dismissAll: clearing ${state.activeReviews.size} reviews`);
+					for (const [fp, review] of state.activeReviews) {
+						try {
+							fs.writeFileSync(fp, review.modifiedContent, "utf8");
+						} catch {}
+					}
+					state.activeReviews.clear();
+					reviewManager.reviewFiles = [];
+					reviewManager.currentFileIndex = 0;
+					clearReviewState(workspacePath);
+					clearAllHistories();
+					reviewManager.syncState();
+					reviewManager.refreshUI();
+					reviewManager._onReviewStateChange.fire(false);
+					state.refreshAll();
+				},
+			],
+		["ccr.undo", () => reviewManager?.undoResolve()],
 		["ccr.redo", () => reviewManager?.redoResolve()],
 		["ccr.prevFile", () => actions.navigateFile(-1)],
 			["ccr.nextFile", () => actions.navigateFile(1)],

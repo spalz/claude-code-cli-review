@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Claude Code Review — PreToolUse hook v8.0
+# Claude Code Review — PreToolUse hook v8.1
 # Managed by Claude Code Review extension. Do not edit manually.
 # Captures file content BEFORE Claude modifies it.
 
 LOG="/tmp/ccr-hook.log"
 echo "[ccr-pre-hook] $(date +%H:%M:%S) --- pre hook invoked ---" >> "$LOG"
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+CCR_PORT=$(cat "$HOOK_DIR/../ccr-port" 2>/dev/null || echo 27182)
+echo "[ccr-pre-hook] $(date +%H:%M:%S) port=$CCR_PORT" >> "$LOG"
 
 INPUT=$(cat)
 
@@ -24,7 +28,7 @@ if [[ "$TOOL_NAME" == "Edit" || "$TOOL_NAME" == "Write" ]]; then
   fi
   curl -sf -X POST -H "Content-Type: application/json" \
     -d "{\"file\":\"$FILE_PATH\",\"content\":\"$CONTENT\"}" \
-    http://127.0.0.1:27182/snapshot >/dev/null 2>&1
+    http://127.0.0.1:$CCR_PORT/snapshot >/dev/null 2>&1
   echo "[ccr-pre-hook] $(date +%H:%M:%S) snapshot sent for $FILE_PATH" >> "$LOG"
 elif [[ "$TOOL_NAME" == "Bash" ]]; then
   echo "$INPUT" | python3 -c "
@@ -32,7 +36,7 @@ import sys,json
 d=json.load(sys.stdin)
 cmd=d.get('tool_input',{}).get('command','')
 print(json.dumps({'tool':'Bash','command':cmd}))
-" 2>/dev/null | curl -sf -X POST -H "Content-Type: application/json" -d @- http://127.0.0.1:27182/snapshot >/dev/null 2>&1
+" 2>/dev/null | curl -sf -X POST -H "Content-Type: application/json" -d @- http://127.0.0.1:$CCR_PORT/snapshot >/dev/null 2>&1
   echo "[ccr-pre-hook] $(date +%H:%M:%S) Bash snapshot sent" >> "$LOG"
 fi
 exit 0
