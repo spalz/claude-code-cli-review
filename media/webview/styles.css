@@ -560,10 +560,6 @@ vscode-context-menu {
 .term-container .xterm {
 	height: 100%;
 }
-.term-container.drop-active {
-	outline: 2px dashed var(--accent);
-	outline-offset: -2px;
-}
 .term-error-overlay {
 	position: absolute;
 	inset: 0;

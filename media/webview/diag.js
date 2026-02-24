@@ -42,6 +42,7 @@
 			length: buf.length,
 			cols: termEntry.term.cols,
 			rows: termEntry.term.rows,
+			bufType: buf.type,
 		};
 	};
 })();

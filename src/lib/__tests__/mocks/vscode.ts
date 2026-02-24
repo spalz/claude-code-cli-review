@@ -109,6 +109,10 @@ export enum OverviewRulerLane {
 
 export const env = {
 	openExternal: vi.fn().mockResolvedValue(true),
+	clipboard: {
+		readText: vi.fn().mockResolvedValue(""),
+		writeText: vi.fn().mockResolvedValue(undefined),
+	},
 };
 
 export const workspace = {

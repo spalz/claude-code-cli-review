@@ -48,10 +48,10 @@ export type WebviewToExtensionMessage =
 	| { type: "unarchive-session"; sessionId: string }
 	| { type: "load-archived-sessions" }
 	| { type: "terminal-input"; sessionId: number; data: string }
+	| { type: "read-clipboard"; sessionId: number }
 	| { type: "terminal-resize"; sessionId: number; cols: number; rows: number }
 	| { type: "close-terminal"; sessionId: number }
 	| { type: "close-session-by-claude-id"; claudeSessionId: string }
-	| { type: "file-dropped"; sessionId: number; uri: string }
 	| { type: "start-review" }
 	| { type: "accept-file"; filePath: string }
 	| { type: "reject-file"; filePath: string }

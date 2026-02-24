@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
+import * as cp from "child_process";
 import * as log from "../log";
 import { fileLog } from "../file-logger";
 import * as state from "../state";
@@ -32,6 +33,66 @@ export interface MessageContext {
 export interface MessageResult {
 	webviewReady: boolean;
 	pendingHookStatus: HookStatus | null;
+}
+
+/**
+ * Resolve clipboard contents for terminal paste, mimicking native terminal behavior (iTerm2).
+ *
+ * On macOS, when a file is copied in Finder, NSPasteboard contains:
+ *   - «class furl» — full POSIX path (e.g., /Users/x/file.txt)
+ *   - text/plain   — just the filename (file.txt)
+ *   - image types  — file icon rendered by Finder (NOT the file content)
+ *
+ * When a screenshot is taken (Cmd+Shift+4), NSPasteboard contains:
+ *   - «class PNGf» — PNG image data
+ *   - NO furl, NO text
+ *
+ * Returns: { type: "text", text } for file paths and regular text,
+ *          { type: "image", tmpPath } for screenshots saved to a temp file.
+ */
+export async function resolveClipboard(): Promise<{ type: "text"; text: string } | { type: "image"; tmpPath: string } | null> {
+	if (process.platform === "darwin") {
+		// 1. Try file URL — full path from Finder copy
+		try {
+			const filePath = cp.execSync(
+				`osascript -e 'try' -e 'set theFiles to POSIX path of (the clipboard as «class furl»)' -e 'return theFiles' -e 'end try'`,
+				{ encoding: "utf8", timeout: 2000 },
+			).trim();
+			if (filePath) {
+				log.log(`clipboard: file path via osascript: "${filePath}"`);
+				return { type: "text", text: filePath };
+			}
+		} catch {
+			// No file URL — continue
+		}
+
+		// 2. Try plain text
+		const text = await vscode.env.clipboard.readText();
+		if (text) {
+			return { type: "text", text };
+		}
+
+		// 3. No text — try image (screenshot)
+		try {
+			const tmpFile = path.join(os.tmpdir(), `ccr-paste-${Date.now()}.png`);
+			cp.execSync(
+				`osascript -e 'try' -e 'set imgData to the clipboard as «class PNGf»' -e 'set fp to open for access POSIX file "${tmpFile}" with write permission' -e 'write imgData to fp' -e 'close access fp' -e 'return "ok"' -e 'on error' -e 'return ""' -e 'end try'`,
+				{ encoding: "utf8", timeout: 3000 },
+			);
+			if (fs.existsSync(tmpFile) && fs.statSync(tmpFile).size > 0) {
+				log.log(`clipboard: screenshot saved to ${tmpFile}`);
+				return { type: "image", tmpPath: tmpFile };
+			}
+		} catch {
+			// No image in clipboard
+		}
+
+		return null;
+	}
+
+	// Non-macOS: just read text
+	const text = await vscode.env.clipboard.readText();
+	return text ? { type: "text", text } : null;
 }
 
 export function handleWebviewMessage(
@@ -206,6 +267,25 @@ export function handleWebviewMessage(
 			ctx.ptyManager.writeToSession(msg.sessionId as number, msg.data as string);
 			break;
 
+		case "read-clipboard": {
+			const clipSessionId = msg.sessionId as number;
+			resolveClipboard().then((result) => {
+				if (!result) {
+					log.log(`read-clipboard: session #${clipSessionId}, clipboard empty`);
+					return;
+				}
+				if (result.type === "text") {
+					log.log(`read-clipboard: session #${clipSessionId}, text len=${result.text.length}, "${result.text.slice(0, 80)}"`);
+					ctx.ptyManager.writeToSession(clipSessionId, `\x1b[200~${result.text}\x1b[201~`);
+				} else {
+					// Image (screenshot) — send temp file path so Claude CLI reads it
+					log.log(`read-clipboard: session #${clipSessionId}, image at ${result.tmpPath}`);
+					ctx.ptyManager.writeToSession(clipSessionId, `\x1b[200~${result.tmpPath}\x1b[201~`);
+				}
+			});
+			break;
+		}
+
 		case "terminal-resize":
 			ctx.ptyManager.resizeSession(
 				msg.sessionId as number,
@@ -247,21 +327,6 @@ export function handleWebviewMessage(
 			});
 			ctx.sessionMgr.sendOpenSessionIds();
 			state.refreshAll();
-			break;
-		}
-
-		case "file-dropped": {
-			const uri = (msg.uri as string).trim().split("\n")[0];
-			const sessionId = msg.sessionId as number;
-			log.log(`file-dropped: session #${sessionId}, uri=${uri}`);
-			try {
-				const fileUri = vscode.Uri.parse(uri);
-				const relativePath = vscode.workspace.asRelativePath(fileUri);
-				log.log(`file-dropped: resolved to ${relativePath}`);
-				ctx.ptyManager.writeToSession(sessionId, relativePath);
-			} catch (err) {
-				log.log(`file-dropped: error -- ${(err as Error).message}`);
-			}
 			break;
 		}
 
@@ -508,12 +573,13 @@ export function handleWebviewMessage(
 			break;
 		}
 
-		case "diag-log":
-			fileLog.log("webview", `[${msg.category as string}] ${msg.message as string}`, msg.data as Record<string, unknown>);
-			if ((msg.category as string) === "links") {
-				log.log(`[webview:links] ${msg.message as string}: ${JSON.stringify(msg.data)}`);
-			}
+		case "diag-log": {
+			const diagCat = msg.category as string;
+			const diagMsg = msg.message as string;
+			const diagData = msg.data as Record<string, unknown>;
+			fileLog.log("webview", `[${diagCat}] ${diagMsg}`, diagData);
 			break;
+		}
 	}
 
 	return { webviewReady, pendingHookStatus };

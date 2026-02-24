@@ -191,6 +191,10 @@
 				before: layoutBefore,
 				after: layoutAfter,
 			});
+			// Toolbar visibility changed — re-fit terminal to new available height
+			if (typeof fitActiveTerminal === "function") {
+				fitActiveTerminal("toolbar-layout");
+			}
 		}
 	};
 	// Toolbar more menu — uses vscode-context-menu

@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import * as log from "../log";
-import { fileLog } from "../file-logger";
 import * as state from "../state";
 import { isProjectTrusted } from "../claude-settings";
 import { isHookInstalled } from "../hooks";
@@ -36,7 +35,7 @@ export class SessionManager {
 	refreshClaudeSessions(): void {
 		const openIds = this._allOpenClaudeIds;
 		const { sessions, archivedCount } = listSessions(this._wp, 30, 0, openIds);
-		// fileLog: refresh is called frequently, skip logging to reduce noise
+		log.log(`refreshClaudeSessions: found ${sessions.length} sessions, ${archivedCount} archived`);
 		this._postMessage({ type: "sessions-list", sessions, archivedCount });
 		this.sendOpenSessionIds();
 	}
@@ -45,14 +44,14 @@ export class SessionManager {
 		if (!this._pendingSession) return;
 		const { resumeId, restoring } = this._pendingSession;
 		this._pendingSession = null;
-		fileLog.log("session", `resumePending: ${resumeId || "new"}`);
+		log.log(`resumePendingSession: resumeId=${resumeId || "none"}`);
 		this.startNewClaudeSession(resumeId, restoring);
 	}
 
 	startNewClaudeSession(resumeId?: string, restoring?: boolean): void {
 		// Trust gate — show onboarding if project not yet trusted
 		if (!restoring && !isProjectTrusted(this._wp)) {
-			fileLog.log("session", "onboarding: project not trusted");
+			log.log("startNewClaudeSession: project not trusted, showing onboarding");
 			this._pendingSession = { resumeId, restoring };
 			this._postMessage({
 				type: "show-onboarding",
@@ -69,7 +68,7 @@ export class SessionManager {
 			.getConfiguration("claudeCodeReview")
 			.get<string>("cliCommand", "claude");
 		const cmd = resumeId ? `${cli} --resume ${resumeId}` : cli;
-		fileLog.log("session", `start`, { resumeId: resumeId || null, cmd });
+		log.log(`startNewClaudeSession: resumeId=${resumeId || "none"}, cmd=${cmd}`);
 
 		const info = this._ptyManager.createSession(
 			resumeId ? `resume:${resumeId.slice(0, 8)}` : "new",
@@ -91,7 +90,7 @@ export class SessionManager {
 		} as ExtensionToWebviewMessage);
 		this.sendOpenSessionIds();
 		state.refreshAll();
-		fileLog.log("session", `started: pty=${info.id}, ${Date.now() - t0}ms`);
+		log.log(`startNewClaudeSession: resume=${resumeId || "none"}, pty=${info.id}, ${Date.now() - t0}ms`);
 
 		if (!resumeId) {
 			this._detectNewSessionId(info.id);
@@ -114,12 +113,14 @@ export class SessionManager {
 		const openClaudeIds = [...this._allOpenClaudeIds];
 		const ptyIds = new Set(this._ptyToClaudeId.values());
 		const lazyClaudeIds = openClaudeIds.filter((id) => !ptyIds.has(id));
-		// sendOpenSessionIds is called frequently, skip logging
+		log.log(`sendOpenSessionIds: [${openClaudeIds.map((id) => id.slice(0, 8)).join(", ")}], lazy=[${lazyClaudeIds.map((id) => id.slice(0, 8)).join(", ")}]`);
 		this._postMessage({ type: "open-sessions-update", openClaudeIds, lazyClaudeIds });
 	}
 
 	removeOpenSession(ptySessionId: number): void {
-		fileLog.log("session", `removeOpen`, { pty: ptySessionId, claudeId: this._ptyToClaudeId.get(ptySessionId) || null });
+		log.log(
+			`removeOpenSession: pty=${ptySessionId}, claude=${this._ptyToClaudeId.get(ptySessionId) || "?"}`,
+		);
 		const claudeId = this._ptyToClaudeId.get(ptySessionId);
 		this._ptyToClaudeId.delete(ptySessionId);
 		if (claudeId) this._allOpenClaudeIds.delete(claudeId);
@@ -128,7 +129,7 @@ export class SessionManager {
 
 	/** Remove an open session by claude ID (works for lazy placeholders without PTY) */
 	removeOpenSessionByClaudeId(claudeId: string): void {
-		fileLog.log("session", `removeByClaudeId`, { claudeId });
+		log.log(`removeOpenSessionByClaudeId: ${claudeId.slice(0, 8)}`);
 		this._allOpenClaudeIds.delete(claudeId);
 		// Also clean up PTY mapping if one exists
 		for (const [ptyId, cId] of this._ptyToClaudeId) {
@@ -141,21 +142,22 @@ export class SessionManager {
 	}
 
 	persistActiveSession(claudeId: string | null): void {
-		fileLog.log("session", `persistActive: ${claudeId || "none"}`);
+		log.log(`persistActiveSession: ${claudeId || "none"}`);
 		this._workspaceState?.update("ccr.activeSession", claudeId || null);
 	}
 
 	restoreSessions(): void {
 		if (this._restored) {
-			fileLog.log("session", "restore: already restored, skipping");
+			log.log("restoreSessions: already restored, skipping");
 			return;
 		}
 		this._restored = true;
 		const t0 = Date.now();
 		const ids = [...new Set(this._workspaceState?.get<string[]>("ccr.openSessions") || [])];
 		const activeClaudeId = this._workspaceState?.get<string>("ccr.activeSession") || null;
-		log.log(`restoreSessions: ${ids.length} sessions`);
-		fileLog.log("session", `restore`, { count: ids.length, ids, activeClaudeId });
+		log.log(
+			`restoreSessions: ${ids.length} sessions to restore: [${ids.join(", ")}], active=${activeClaudeId || "none"}`,
+		);
 
 		// Only start PTY for the active session; others get placeholder tabs
 		const activeId = activeClaudeId && ids.includes(activeClaudeId) ? activeClaudeId : ids[0];
@@ -168,14 +170,14 @@ export class SessionManager {
 		for (const claudeId of ids) {
 			// Skip if already opened (e.g., user clicked resume before restore ran)
 			if (this.findPtyByClaudeId(claudeId) !== null) {
-				fileLog.log("session", `restore: ${claudeId.slice(0, 8)} already has PTY`);
+				log.log(`restoreSessions: ${claudeId.slice(0, 8)} already has PTY, skipping`);
 				continue;
 			}
 			if (claudeId === activeId) {
 				this.startNewClaudeSession(claudeId, true);
 			} else {
 				// Send placeholder tab without spawning PTY
-				fileLog.log("session", `restore: lazy placeholder for ${claudeId.slice(0, 8)}`);
+				log.log(`restoreSessions: lazy placeholder for ${claudeId.slice(0, 8)}`);
 				this._postMessage({
 					type: "terminal-session-created",
 					sessionId: -1, // sentinel — no real PTY yet
@@ -189,12 +191,12 @@ export class SessionManager {
 
 		this._persistOpenSessions();
 		this.sendOpenSessionIds();
-		fileLog.log("session", `restored ${ids.length} in ${Date.now() - t0}ms`);
+		log.log(`restoreSessions: ${ids.length} restored (1 active, ${ids.length - 1} lazy) in ${Date.now() - t0}ms`);
 
 		// Activate the real session
 		const activePtyId = this.findPtyByClaudeId(activeId);
 		if (activePtyId !== null) {
-			fileLog.log("session", `restore: activating pty #${activePtyId}`);
+			log.log(`restoreSessions: activating active session pty #${activePtyId}`);
 			this._postMessage({
 				type: "activate-terminal",
 				sessionId: activePtyId,
@@ -206,7 +208,7 @@ export class SessionManager {
 	lazyResume(claudeId: string, placeholderPtyId: number): void {
 		// Check not already loaded
 		if (this.findPtyByClaudeId(claudeId) !== null) {
-			fileLog.log("session", `lazyResume: ${claudeId.slice(0, 8)} already has PTY`);
+			log.log(`lazyResume: ${claudeId.slice(0, 8)} already has a PTY, activating`);
 			const ptyId = this.findPtyByClaudeId(claudeId)!;
 			this._postMessage({ type: "activate-terminal", sessionId: ptyId });
 			return;
@@ -216,7 +218,7 @@ export class SessionManager {
 			.getConfiguration("claudeCodeReview")
 			.get<string>("cliCommand", "claude");
 		const cmd = `${cli} --resume ${claudeId}`;
-		fileLog.log("session", `lazy-resume`, { claudeId, cmd });
+		log.log(`lazyResume: spawning ${claudeId.slice(0, 8)}, cmd=${cmd}`);
 
 		const info = this._ptyManager.createSession(
 			`resume:${claudeId.slice(0, 8)}`,
@@ -273,7 +275,7 @@ export class SessionManager {
 					const stat = fs.statSync(`${sessionsDir}/${file}`);
 					if (stat.mtimeMs < createdAt - 2000) continue;
 
-					fileLog.log("session", `detected`, { claudeId: sessionId, ptyId });
+					log.log(`detected new claude session: ${sessionId.slice(0, 8)} for pty #${ptyId}`);
 					this._ptyToClaudeId.set(ptyId, sessionId);
 					this._allOpenClaudeIds.add(sessionId);
 					this._persistOpenSessions();
@@ -296,7 +298,7 @@ export class SessionManager {
 			if (attempts > 30 || tryDetect()) {
 				clearInterval(interval);
 				if (attempts > 30) {
-					fileLog.log("session", `detect timeout for pty #${ptyId}`);
+					log.log(`_detectNewSessionId: timed out for pty #${ptyId} after 60s`);
 				}
 			}
 		}, 2000);
@@ -353,7 +355,7 @@ export class SessionManager {
 		for (const claudeId of this._allOpenClaudeIds) {
 			const newName = names[claudeId];
 			if (newName && newName !== this._cachedNames[claudeId]) {
-				fileLog.log("session", `names-sync: ${claudeId.slice(0, 8)} -> "${newName}"`);
+				log.log(`names-sync: ${claudeId.slice(0, 8)} -> "${newName}"`);
 				this._postMessage({
 					type: "rename-terminal-tab",
 					claudeId,
@@ -366,7 +368,7 @@ export class SessionManager {
 
 	private _persistOpenSessions(): void {
 		const ids = [...this._allOpenClaudeIds];
-		fileLog.log("session", `persist: ${ids.length} sessions saved`);
+		log.log(`persistOpenSessions: ${ids.length} sessions saved`);
 		this._workspaceState?.update("ccr.openSessions", ids);
 	}
 

@@ -93,6 +93,15 @@ class PtySession {
 				fileLog.log("terminal", `first-data #${id}`, { bytes: data.length });
 				firstData = false;
 			}
+			// Log screen-switching and full-redraw sequences
+			if (data.includes("\x1b[?1049h") || data.includes("\x1b[?1049l") || data.includes("\x1b[2J")) {
+				fileLog.log("terminal", `screen-seq #${id}`, {
+					len: data.length,
+					altEnter: data.includes("\x1b[?1049h"),
+					altExit: data.includes("\x1b[?1049l"),
+					clearScreen: data.includes("\x1b[2J"),
+				});
+			}
 			onData(this.id, data);
 		});
 		this.process.onExit(({ exitCode }) => {

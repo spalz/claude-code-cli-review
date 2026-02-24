@@ -6,6 +6,7 @@
 
 	var FIT_DELAYS_MS = [100, 300, 800];
 	var RECENT_INPUT_MS = 500;
+	var SCROLL_BOTTOM_THRESHOLD = 5;
 
 	window.addEventListener("message", function (event) {
 		var msg = event.data;
@@ -117,20 +118,83 @@
 						}
 						// Always write to terminal buffer (visible after overlay removed)
 						t.term.write(window.annotateFileLinks(msg.data));
+						t.term.scrollToBottom();
 						break;
 					}
+
+					// --- Initial loading phase (after resume) ---
+					// During initial loading, always scroll to bottom after each write.
+					// Reset idle timer; when output goes silent for LOAD_IDLE_MS,
+					// declare loading complete and do a final fit + scroll.
+					if (t.initialLoading) {
+						t.term.write(window.annotateFileLinks(msg.data));
+						t.term.scrollToBottom();
+						clearTimeout(t.loadIdleTimer);
+						t.loadIdleTimer = setTimeout(function () {
+							t.initialLoading = false;
+							t.loadIdleTimer = null;
+							diagLog("scroll-diag", "initial-load-done", {
+								sid: msg.sessionId,
+							});
+							// Final fit + scroll after CLI finished loading
+							fitActiveTerminal("load-idle-done");
+							setTimeout(function () {
+								t.term.scrollToBottom();
+							}, 100);
+						}, 800); // LOAD_IDLE_MS
+						break;
+					}
+
 					var before = getTermBufferState(t);
 					var buf = t.term.buffer.active;
-					var wasAtBottom = buf.viewportY >= buf.baseY;
+					var isAlt = buf.type === "alternate";
+					var wasAtBottom = isAlt || (buf.baseY - buf.viewportY) <= SCROLL_BOTTOM_THRESHOLD;
 					var recentInput = t.lastInputTime && Date.now() - t.lastInputTime < RECENT_INPUT_MS;
+
+					// Detect screen-switching sequences
+					var hasAltEnter = msg.data.indexOf("\x1b[?1049h") !== -1;
+					var hasAltExit = msg.data.indexOf("\x1b[?1049l") !== -1;
+					var hasFullRedraw = msg.data.indexOf("\x1b[H\x1b[2J") !== -1 || msg.data.indexOf("\x1b[2J") !== -1;
+
 					t.term.write(window.annotateFileLinks(msg.data));
-					var didScroll = wasAtBottom || recentInput;
+
+					var afterBuf = t.term.buffer.active;
+					var isAltAfter = afterBuf.type === "alternate";
+					// Force scroll-to-bottom on: already at bottom, recent user input,
+					// full screen redraw (clearScreen / cursor-home+erase), or screen switch
+					var didScroll = wasAtBottom || recentInput || hasFullRedraw || hasAltEnter || hasAltExit;
 					if (didScroll) {
 						t.term.scrollToBottom();
 					}
 					var after = getTermBufferState(t);
 					var jumped =
 						!didScroll && before && after && before.viewportY !== after.viewportY;
+
+					// Log forced-scroll from fullRedraw/screen-switch
+					if (didScroll && !wasAtBottom && !recentInput) {
+						diagLog("scroll-diag", "FORCE-SCROLL-BOTTOM", {
+							sid: msg.sessionId,
+							len: msg.data.length,
+							reason: hasFullRedraw ? "fullRedraw" : hasAltEnter ? "altEnter" : "altExit",
+							before: before,
+							after: after,
+						});
+					}
+
+					// Log screen switches unconditionally
+					if (hasAltEnter || hasAltExit || isAlt !== isAltAfter) {
+						diagLog("scroll-diag", "SCREEN-SWITCH", {
+							sid: msg.sessionId,
+							len: msg.data.length,
+							hasAltEnter: hasAltEnter,
+							hasAltExit: hasAltExit,
+							bufBefore: isAlt ? "alt" : "normal",
+							bufAfter: isAltAfter ? "alt" : "normal",
+							before: before,
+							after: after,
+						});
+					}
+
 					if (jumped) {
 						diagLog("scroll-diag", "OUTPUT-VIEWPORT-JUMP", {
 							sid: msg.sessionId,
@@ -138,12 +202,25 @@
 							before: before,
 							after: after,
 							wasAtBottom: wasAtBottom,
+							isAlt: isAlt,
 							recentInput: !!recentInput,
+							hasFullRedraw: hasFullRedraw,
+						});
+					} else if (!didScroll && before && before.viewportY !== before.baseY) {
+						// User is scrolled away from bottom — log every write
+						diagLog("scroll-diag", "WRITE-WHILE-SCROLLED-UP", {
+							sid: msg.sessionId,
+							len: msg.data.length,
+							isAlt: isAlt,
+							before: before,
+							after: after,
+							hasFullRedraw: hasFullRedraw,
 						});
 					} else {
 						diagLogThrottled("output", "write", {
 							sid: msg.sessionId,
 							len: msg.data.length,
+							isAlt: isAlt,
 							before: before,
 							after: after,
 							didScroll: didScroll,
@@ -293,6 +370,8 @@
 					terms.set(msg.realPtyId, placeholder);
 					placeholder.tabEl.dataset.tid = msg.realPtyId;
 					placeholder.tabEl.classList.remove("lazy");
+					// Mark as loading — will scroll to bottom until output goes idle
+					placeholder.initialLoading = true;
 					// Update active ID if this was active
 					if (getActiveTerminalId() === msg.placeholderPtyId) {
 						// Re-activate with real ID

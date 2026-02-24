@@ -1,5 +1,5 @@
-// Terminal management — xterm instances, tabs, drag&drop, paste, key handling
-// Depends on: core.js (send, switchMode, showTerminalView, showSessionsList), diag.js (diagLog, diagLogThrottled, diagHex, getTermBufferState), sessions.js (findCachedSession, setActiveClaudeId)
+// Terminal management — xterm instances, tabs, paste, key handling
+// Depends on: core.js (send, switchMode, showTerminalView, showSessionsList), diag.js (diagLog, diagLogThrottled, getTermBufferState), sessions.js (findCachedSession, setActiveClaudeId)
 // Globals: Terminal, FitAddon, WebLinksAddon (loaded via <script> in HTML)
 // Exports: window.{getTerminals, getActiveTerminalId, addTerminal, removeTerminal, activateTerminal, fitActiveTerminal, renameTerminalTab, revertTabRename, syncTabNamesFromSessions, annotateFileLinks, closeErrorTerminal, reopenTerminal}
 (function () {
@@ -31,6 +31,10 @@
 	var CTRL_C_DEBOUNCE_MS = 2000;
 	var LOADING_OVERLAY_TIMEOUT_MS = 15000;
 	var SCROLLBACK_LINES = 10000;
+	var SCROLL_BOTTOM_THRESHOLD = 5;
+	// Idle timeout to detect "loading complete" after resume.
+	// After last terminal-output chunk, wait this long before declaring load done.
+	var LOAD_IDLE_MS = 800;
 
 	window.annotateFileLinks = function (data) {
 		// Fast path: skip if no slash-like chars
@@ -171,12 +175,6 @@
 	function setupDataHandler(term, sessionRef, entry) {
 		var cmdBuf = "";
 		term.onData(function (data) {
-			if (data === "\r" || data.indexOf("\x1b") !== -1 || data.indexOf("\n") !== -1) {
-				diagLog("keys", "onData-enter", {
-					hex: diagHex(data), len: data.length, ts: Date.now(),
-					cmdBuf: cmdBuf, sid: sessionRef.id,
-				});
-			}
 			if (data === "\r") {
 				entry.lastInputTime = Date.now();
 				var cmd = cmdBuf.trim();
@@ -251,12 +249,10 @@
 		container.id = "term-" + id;
 		document.getElementById("terminalsArea").appendChild(container);
 
-		setupDragDrop(container, sessionRef);
-
 		var xt = createXterm(container);
 		registerFileLinkProvider(xt.term);
 		setupKeyHandler(xt.term, sessionRef);
-		setupPasteHandler(container, sessionRef);
+		blockXtermPaste(xt.term);
 
 		var entry = {
 			id: id,
@@ -269,6 +265,10 @@
 			loadingOverlay: createLoadingOverlay(container, id),
 			lazy: !!lazy,
 			sessionRef: sessionRef,
+			// When restoring (silent), mark as "initial loading" — always scroll to bottom
+			// until output goes idle for LOAD_IDLE_MS, signaling CLI finished rendering.
+			initialLoading: !!silent,
+			loadIdleTimer: null,
 		};
 		terminals.set(id, entry);
 
@@ -338,35 +338,37 @@
 	}
 	window.activateTerminal = activateTerminal;
 
-	window.fitActiveTerminal = function (caller) {
+	window.fitActiveTerminal = function (caller, _retries) {
 		if (!activeTerminalId) return;
 		var t = terminals.get(activeTerminalId);
 		if (t && window.viewMode === "terminals") {
-			var initBuf = getTermBufferState(t);
 			setTimeout(function () {
 				try {
-					var prefit = getTermBufferState(t);
+					// Skip fit if container has zero size (tab not yet visible).
+					// Retry up to 5 times with increasing delay to handle tab switch transitions.
+					if (!t.container.offsetWidth || !t.container.offsetHeight) {
+						var attempt = (_retries || 0) + 1;
+						if (attempt <= 5) {
+							diagLog("scroll-diag", "fit-retry-zero", {
+								caller: caller, sid: activeTerminalId, attempt: attempt,
+							});
+							setTimeout(function () {
+								fitActiveTerminal(caller, attempt);
+							}, attempt * 100);
+						}
+						return;
+					}
 					var buf = t.term.buffer.active;
-					var wasAtBottom = buf.viewportY >= buf.baseY;
+					var wasAtBottom = (buf.baseY - buf.viewportY) <= SCROLL_BOTTOM_THRESHOLD;
 					var savedY = buf.viewportY;
 					t.fitAddon.fit();
-					var postfit = getTermBufferState(t);
-					var scrolled = false;
-					if (!wasAtBottom && savedY > 0) {
+					if (wasAtBottom) {
+						// User was at bottom before fit — stay at bottom after
+						t.term.scrollToBottom();
+					} else if (savedY > 0) {
+						// User was scrolled up — try to preserve position
 						t.term.scrollToLine(savedY);
-						scrolled = true;
 					}
-					var final = scrolled ? getTermBufferState(t) : postfit;
-					diagLog("scroll-diag", "fit", {
-						caller: caller || "unknown",
-						sid: activeTerminalId,
-						initBuf: initBuf,
-						prefit: prefit,
-						postfit: postfit,
-						final: final,
-						wasAtBottom: wasAtBottom,
-						scrolledBack: scrolled,
-					});
 				} catch (e) {
 					/* ignore */
 				}
@@ -506,32 +508,22 @@
 		});
 	}
 
-	// --- Drag & drop ---
+	// --- Paste interception ---
+	// xterm.js registers its own paste listeners on term.textarea and term.element
+	// in bubble phase. We block them via capture phase to prevent duplicate paste
+	// (our read-clipboard already handles paste via extension-side clipboard API).
 
-	function setupDragDrop(container, sessionRef) {
-		container.addEventListener("dragover", function (e) {
+	function blockXtermPaste(term) {
+		var blocker = function (e) {
 			e.preventDefault();
-			e.dataTransfer.dropEffect = "copy";
-			container.classList.add("drop-active");
-		});
-		container.addEventListener("dragleave", function () {
-			container.classList.remove("drop-active");
-		});
-		container.addEventListener("drop", function (e) {
-			e.preventDefault();
-			container.classList.remove("drop-active");
-			var uri =
-				e.dataTransfer.getData("text/uri-list") ||
-				e.dataTransfer.getData("text/plain") ||
-				e.dataTransfer.getData("text");
-			if (uri) {
-				send("file-dropped", { sessionId: sessionRef.id, uri: uri });
-			} else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-				var filePath = e.dataTransfer.files[0].path || e.dataTransfer.files[0].name;
-				if (filePath)
-					send("file-dropped", { sessionId: sessionRef.id, uri: "file://" + filePath });
-			}
-		});
+			e.stopImmediatePropagation();
+		};
+		if (term.textarea) {
+			term.textarea.addEventListener("paste", blocker, true);
+		}
+		if (term.element) {
+			term.element.addEventListener("paste", blocker, true);
+		}
 	}
 
 	// --- Key handler ---
@@ -539,22 +531,26 @@
 	function setupKeyHandler(term, sessionRef) {
 		var lastCtrlC = 0;
 		term.attachCustomKeyEventHandler(function (event) {
-			// Log ALL Enter events (keydown + keyup) for debugging
-			if (event.key === "Enter") {
-				diagLog("keys", "enter-event", {
-					type: event.type, shift: event.shiftKey, ctrl: event.ctrlKey,
-					alt: event.altKey, meta: event.metaKey, code: event.code,
-					repeat: event.repeat, ts: Date.now(), sid: sessionRef.id,
-				});
-			}
-			if (event.type !== "keydown") return true;
-			// Shift+Enter → send ESC+CR (same as Option+Enter in iTerm — newline in Claude CLI)
+			// Block Shift+Enter for ALL event types (keydown, keypress, keyup)
+			// to prevent xterm.js from sending an extra CR after our ESC+CR
 			if (event.shiftKey && event.key === "Enter") {
-				var hex = diagHex("\x1b\r");
-				diagLog("keys", "shift-enter-SEND", { hex: hex, ts: Date.now(), sid: sessionRef.id });
-				send("terminal-input", { sessionId: sessionRef.id, data: "\x1b\r" });
+				if (event.type === "keydown") {
+					send("terminal-input", { sessionId: sessionRef.id, data: "\x1b\r" });
+				}
 				return false;
 			}
+			// Block Cmd+V / Ctrl+V for ALL event types (keydown, keypress, keyup)
+			// to prevent xterm.js from sending parasitic empty bracket paste.
+			// Only send read-clipboard on keydown.
+			if (event.key === "v" && (event.metaKey || event.ctrlKey)) {
+				if (event.type === "keydown") {
+					send("read-clipboard", { sessionId: sessionRef.id });
+				}
+				return false;
+			}
+
+			if (event.type !== "keydown") return true;
+
 			if (event.ctrlKey && event.key === "c") {
 				var now = Date.now();
 				if (now - lastCtrlC < CTRL_C_DEBOUNCE_MS) return false;
@@ -568,34 +564,6 @@
 		});
 	}
 
-	// --- Image paste ---
-
-	function setupPasteHandler(container, sessionRef) {
-		container.addEventListener("paste", function (e) {
-			var items = e.clipboardData && e.clipboardData.items;
-			if (!items) return;
-			for (var i = 0; i < items.length; i++) {
-				if (items[i].type.startsWith("image/")) {
-					e.preventDefault();
-					e.stopPropagation();
-					var blob = items[i].getAsFile();
-					if (!blob) return;
-					var mimeType = items[i].type;
-					var reader = new FileReader();
-					reader.onload = function () {
-						var base64 = reader.result.split(",")[1];
-						send("paste-image", {
-							sessionId: sessionRef.id,
-							data: base64,
-							mimeType: mimeType,
-						});
-					};
-					reader.readAsDataURL(blob);
-					return;
-				}
-			}
-		});
-	}
 
 	// Sync tab names from fresh sessions data (called on sessions-list update)
 	window.syncTabNamesFromSessions = function (sessions) {
