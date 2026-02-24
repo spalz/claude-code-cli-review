@@ -132,16 +132,15 @@
 					var bar = document.createElement("div");
 					bar.className = "term-reopen-bar";
 					if (te.claudeId) {
-						var reopenBtn = document.createElement("button");
-						reopenBtn.className = "btn primary";
+						var reopenBtn = document.createElement("vscode-button");
 						reopenBtn.textContent = "Reopen session";
 						reopenBtn.onclick = function () {
 							reopenTerminal(msg.sessionId);
 						};
 						bar.appendChild(reopenBtn);
 					}
-					var closeBtn = document.createElement("button");
-					closeBtn.className = "btn";
+					var closeBtn = document.createElement("vscode-button");
+					closeBtn.setAttribute("secondary", "");
 					closeBtn.textContent = "Close";
 					closeBtn.onclick = function () {
 						send("close-terminal", { sessionId: msg.sessionId, claudeId: te.claudeId || null });
@@ -163,8 +162,7 @@
 						'<div style="font-size:28px;margin-bottom:12px">&#9888;</div>' +
 						'<div style="font-size:13px;font-weight:600;margin-bottom:8px">Session not found</div>' +
 						'<div style="font-size:11px;opacity:.6;margin-bottom:16px">This conversation was deleted or is no longer available in Claude CLI</div>';
-					var errBtn = document.createElement("button");
-					errBtn.className = "btn primary";
+					var errBtn = document.createElement("vscode-button");
 					errBtn.textContent = "Back to sessions";
 					errBtn.addEventListener("click", function () {
 						closeErrorTerminal(msg.sessionId);

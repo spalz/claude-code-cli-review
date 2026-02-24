@@ -34,11 +34,6 @@
 		e.stopPropagation();
 
 		var action = btn.dataset.action;
-		// Close more menu on any action except toggle
-		if (action !== "toggle-more-menu") {
-			var mm = document.getElementById("toolbarMoreMenu");
-			if (mm) mm.classList.remove("open");
-		}
 		switch (action) {
 			case "prev-hunk":
 				send("navigate-hunk", { direction: -1 });
@@ -61,16 +56,6 @@
 			case "accept-all":
 				showConfirm("Accept all remaining changes?", function () {
 					send("accept-all-confirm");
-				});
-				break;
-			case "reject-all":
-				showConfirm("Reject all remaining changes?", function () {
-					send("reject-all-confirm");
-				});
-				break;
-			case "dismiss-all":
-				showConfirm("Dismiss all reviews? Files will keep Claude's changes.", function () {
-					send("dismiss-all-confirm");
 				});
 				break;
 			case "toggle-more-menu":
@@ -184,36 +169,47 @@
 		html +=
 			'<button class="toolbar-btn more-btn" data-action="toggle-more-menu" title="More actions">' +
 			'<span class="codicon codicon-kebab-vertical"></span></button>';
-		html += '<div class="toolbar-more-menu" id="toolbarMoreMenu">';
-		html += '<div class="toolbar-more-item" data-action="reject-all"' +
-			(remaining === 0 ? ' style="opacity:0.4;pointer-events:none"' : '') +
-			'>Reject all changes</div>';
-		html += '<div class="toolbar-more-item danger" data-action="dismiss-all">Dismiss all reviews</div>';
-		html += '</div>';
 		html += "</div>";
 
 		toolbar.innerHTML = html;
 	};
-	function toggleMoreMenu(btn) {
-		var menu = document.getElementById("toolbarMoreMenu");
-		if (!menu) return;
-		var isOpen = menu.classList.contains("open");
-		if (isOpen) {
-			menu.classList.remove("open");
-		} else {
-			// Position relative to button
-			var rect = btn.getBoundingClientRect();
-			menu.style.right = "4px";
-			menu.style.top = (rect.bottom - btn.closest(".review-toolbar").getBoundingClientRect().top) + "px";
-			menu.classList.add("open");
+	// Toolbar more menu — uses vscode-context-menu
+	var toolbarCtxMenu = null;
+
+	function getToolbarCtxMenu() {
+		if (!toolbarCtxMenu) {
+			toolbarCtxMenu = document.createElement("vscode-context-menu");
+			toolbarCtxMenu.id = "toolbarMoreMenu";
+			document.body.appendChild(toolbarCtxMenu);
+			toolbarCtxMenu.addEventListener("vsc-context-menu-select", function (e) {
+				var val = e.detail && e.detail.value;
+				if (val === "reject-all") {
+					showConfirm("Reject all remaining changes?", function () {
+						send("reject-all-confirm");
+					});
+				} else if (val === "dismiss-all") {
+					showConfirm("Dismiss all reviews? Files will keep Claude's changes.", function () {
+						send("dismiss-all-confirm");
+					});
+				}
+			});
 		}
+		return toolbarCtxMenu;
 	}
 
-	// Close more menu on outside click
-	document.addEventListener("click", function (e) {
-		var menu = document.getElementById("toolbarMoreMenu");
-		if (menu && menu.classList.contains("open") && !e.target.closest(".more-btn") && !e.target.closest(".toolbar-more-menu")) {
-			menu.classList.remove("open");
+	function toggleMoreMenu(btn) {
+		var menu = getToolbarCtxMenu();
+		if (menu.show) {
+			menu.show = false;
+			return;
 		}
-	});
+		var rect = btn.getBoundingClientRect();
+		menu.data = [
+			{ label: "Reject all changes", value: "reject-all" },
+			{ label: "Dismiss all reviews", value: "dismiss-all" },
+		];
+		menu.style.left = (rect.right - 160) + "px";
+		menu.style.top = rect.bottom + "px";
+		menu.show = true;
+	}
 })();

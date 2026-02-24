@@ -116,41 +116,36 @@
 		ctxTarget = { sessionId: sessionId, title: s ? s.title : "", isOpen: isOpen, isArchived: !!isArchived };
 
 		var menu = document.getElementById("ctxMenu");
-		var html = "";
+		var items = [];
 		if (isArchived) {
-			html += '<div class="ctx-menu-item" data-action="unarchive">Restore</div>';
-			html += '<div class="ctx-menu-item danger" data-action="delete">Delete</div>';
+			items.push({ label: "Restore", value: "unarchive" });
+			items.push({ separator: true });
+			items.push({ label: "Delete", value: "delete" });
 		} else {
-			html += '<div class="ctx-menu-item" data-action="rename">Rename</div>';
+			items.push({ label: "Rename", value: "rename" });
 			if (isOpen) {
-				html += '<div class="ctx-menu-item" data-action="close">Close session</div>';
+				items.push({ label: "Close session", value: "close" });
 			}
-			html += '<div class="ctx-menu-sep"></div>';
-			html += '<div class="ctx-menu-item" data-action="archive">Archive</div>';
-			html += '<div class="ctx-menu-item danger" data-action="delete">Delete</div>';
+			items.push({ separator: true });
+			items.push({ label: "Archive", value: "archive" });
+			items.push({ label: "Delete", value: "delete" });
 		}
-		menu.innerHTML = html;
-
-		var rect = document.body.getBoundingClientRect();
-		var x = e.clientX,
-			y = e.clientY;
-		menu.style.display = "block";
-		if (x + menu.offsetWidth > rect.width) x = rect.width - menu.offsetWidth - 4;
-		if (y + menu.offsetHeight > rect.height) y = rect.height - menu.offsetHeight - 4;
-		menu.style.left = x + "px";
-		menu.style.top = y + "px";
-
-		menu.querySelectorAll(".ctx-menu-item").forEach(function (item) {
-			item.onclick = function (ev) {
-				ev.stopPropagation();
-				handleCtxAction(item.dataset.action);
-			};
-		});
+		menu.data = items;
+		menu.style.left = e.clientX + "px";
+		menu.style.top = e.clientY + "px";
+		menu.show = true;
 	}
 
 	function hideCtxMenu() {
-		document.getElementById("ctxMenu").style.display = "none";
+		var menu = document.getElementById("ctxMenu");
+		menu.show = false;
 	}
+
+	// Handle context menu item selection
+	document.getElementById("ctxMenu").addEventListener("vsc-context-menu-select", function (e) {
+		var action = e.detail && e.detail.value;
+		if (action) handleCtxAction(action);
+	});
 
 	document.addEventListener("click", hideCtxMenu);
 	document.addEventListener("contextmenu", function (e) {

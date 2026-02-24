@@ -287,7 +287,9 @@
 		if (val !== undefined && val !== null) {
 			el.value = String(val);
 		} else {
-			el.selectedIndex = 0;
+			// vscode-single-select: set first option value
+			var firstOpt = el.querySelector("vscode-option");
+			if (firstOpt) el.value = firstOpt.getAttribute("value") || "";
 		}
 	}
 	function setCheckbox(id, val) {
