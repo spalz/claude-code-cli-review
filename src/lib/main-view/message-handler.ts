@@ -4,7 +4,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as log from "../log";
 import * as state from "../state";
-import { readClaudeSettings, readClaudeSettingsScoped, writeClaudeSetting, writeClaudeRuntimeState } from "../claude-settings";
+import { readClaudeSettings, readClaudeSettingsScoped, writeClaudeSetting, writeClaudeRuntimeState, trustProject } from "../claude-settings";
 import type { SettingsScope } from "../claude-settings";
 import {
 	deleteSession,
@@ -102,6 +102,18 @@ export function handleWebviewMessage(
 		case "new-claude-session":
 			ctx.sessionMgr.startNewClaudeSession();
 			break;
+
+		case "onboarding-complete": {
+			log.log(`onboarding-complete: installHooks=${msg.installHooks}`);
+			trustProject(ctx.wp);
+			if (msg.installHooks) {
+				const { doInstall } = require("../hooks") as typeof import("../hooks");
+				doInstall(ctx.wp, (status) => ctx.postMessage({ type: "hook-status", status }));
+			}
+			ctx.sessionMgr.resumePendingSession();
+			break;
+		}
+
 
 		case "resume-claude-session": {
 			const claudeSessionId = msg.claudeSessionId as string;
@@ -433,6 +445,10 @@ export function handleWebviewMessage(
 
 		case "reject-all-confirm":
 			vscode.commands.executeCommand("ccr.rejectAll");
+			break;
+
+		case "dismiss-all-confirm":
+			vscode.commands.executeCommand("ccr.dismissAll");
 			break;
 
 		case "open-external-url":

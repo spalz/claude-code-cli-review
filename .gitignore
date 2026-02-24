@@ -4,6 +4,7 @@ dist/
 
 # Review state persistence
 .claude/review-state.json
+.claude/ccr-port
 .ccr-test/
 
 .env

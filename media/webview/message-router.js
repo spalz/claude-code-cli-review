@@ -274,12 +274,16 @@
 			}
 
 			case "restore-view-mode":
-				if (msg.mode === "terminals") {
+				if (msg.mode === "terminals" && window._hasOpenSessions && window._hasOpenSessions()) {
 					switchMode("terminals", true);
-					// Lazy-load: request session restore only when switching to terminals
 					window._sessionsRestored = true;
 					send("request-restore-sessions");
 				}
+				// else: stay on sessions list (no open sessions to show)
+				break;
+
+			case "show-onboarding":
+				showOnboarding(msg);
 				break;
 
 		}

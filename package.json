@@ -75,6 +75,10 @@
 				"title": "Claude Code Review: Undo All Changes"
 			},
 			{
+				"command": "ccr.dismissAll",
+				"title": "Claude Code Review: Dismiss All Reviews"
+			},
+			{
 				"command": "ccr.acceptFile",
 				"title": "Keep File"
 			},

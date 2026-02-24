@@ -1,7 +1,10 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
+import * as path from "path";
 import * as log from "../log";
 import * as state from "../state";
+import { isProjectTrusted } from "../claude-settings";
+import { isHookInstalled } from "../hooks";
 import { listSessions, getSessionsDir, loadSessionNames } from "../sessions";
 import type { PtyManager } from "../pty-manager";
 import type { ExtensionToWebviewMessage } from "../../types";
@@ -15,6 +18,7 @@ export class SessionManager {
 	private _namesDebounce: ReturnType<typeof setTimeout> | null = null;
 	private _cachedNames: Record<string, string> = {};
 	private _jsonlDebounce: ReturnType<typeof setTimeout> | null = null;
+	private _pendingSession: { resumeId?: string; restoring?: boolean } | null = null;
 
 	constructor(
 		private readonly _wp: string,
@@ -36,7 +40,28 @@ export class SessionManager {
 		this.sendOpenSessionIds();
 	}
 
+	resumePendingSession(): void {
+		if (!this._pendingSession) return;
+		const { resumeId, restoring } = this._pendingSession;
+		this._pendingSession = null;
+		log.log(`resumePendingSession: resumeId=${resumeId || "none"}`);
+		this.startNewClaudeSession(resumeId, restoring);
+	}
+
 	startNewClaudeSession(resumeId?: string, restoring?: boolean): void {
+		// Trust gate — show onboarding if project not yet trusted
+		if (!restoring && !isProjectTrusted(this._wp)) {
+			log.log("startNewClaudeSession: project not trusted, showing onboarding");
+			this._pendingSession = { resumeId, restoring };
+			this._postMessage({
+				type: "show-onboarding",
+				folderName: path.basename(this._wp),
+				workspacePath: this._wp,
+				hooksInstalled: isHookInstalled(this._wp),
+			});
+			return;
+		}
+
 		const t0 = Date.now();
 		const cli = vscode.workspace
 			.getConfiguration("claudeCodeReview")

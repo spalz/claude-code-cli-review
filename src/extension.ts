@@ -5,6 +5,8 @@ import { ReviewCodeLensProvider } from "./lib/codelens";
 import { MainViewProvider } from "./lib/main-view";
 import { PtyManager } from "./lib/pty-manager";
 import { applyDecorations, clearDecorations, initDecorations } from "./lib/decorations";
+import * as fs from "fs";
+import * as path from "path";
 import { startServer, stopServer, setAddFileHandler, setWorkspacePath, setGetActiveReviewHandler } from "./lib/server";
 import { checkAndPrompt, doInstall } from "./lib/hooks";
 import { ReviewManager } from "./lib/review-manager";
@@ -253,10 +255,23 @@ export function activate(context: vscode.ExtensionContext): void {
 		});
 		setWorkspacePath(workspacePath);
 		setGetActiveReviewHandler((filePath) => state.activeReviews.get(filePath));
-		startServer();
+
+		const portFilePath = path.join(workspacePath, ".claude", "ccr-port");
+		startServer().then((port) => {
+			try {
+				const dir = path.dirname(portFilePath);
+				if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+				fs.writeFileSync(portFilePath, String(port));
+				log.log(`port file written: ${portFilePath} → ${port}`);
+			} catch (err) {
+				log.log(`failed to write port file: ${(err as Error).message}`);
+			}
+		});
+
 		context.subscriptions.push({
 			dispose: () => {
 				stopServer();
+				try { fs.unlinkSync(portFilePath); } catch {}
 				ptyManager.dispose();
 			},
 		});
@@ -353,7 +368,7 @@ async function resolveCurrentHunk(accept: boolean): Promise<void> {
 }
 
 export function deactivate(): void {
-	// dispose() handles save + file restoration via context.subscriptions
+	// dispose() handles save + file restoration + port file cleanup via context.subscriptions
 	clearAllHistories();
 	stopServer();
 }

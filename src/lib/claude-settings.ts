@@ -40,6 +40,24 @@ export function readClaudeRuntimeState(): Record<string, unknown> {
 	return readJsonFile(getClaudeRuntimeStatePath());
 }
 
+export function isProjectTrusted(workspacePath: string): boolean {
+	const state = readClaudeRuntimeState();
+	const projects = (state.projects || {}) as Record<string, Record<string, unknown>>;
+	const entry = projects[workspacePath];
+	return entry?.hasTrustDialogAccepted === true;
+}
+
+export function trustProject(workspacePath: string): void {
+	const statePath = getClaudeRuntimeStatePath();
+	const state = readJsonFile(statePath);
+	if (!state.projects) state.projects = {};
+	const projects = state.projects as Record<string, Record<string, unknown>>;
+	if (!projects[workspacePath]) projects[workspacePath] = {};
+	projects[workspacePath].hasTrustDialogAccepted = true;
+	fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+	log.log(`trustProject: marked ${workspacePath} as trusted`);
+}
+
 export function writeClaudeRuntimeState(key: string, value: unknown): void {
 	const statePath = getClaudeRuntimeStatePath();
 	const state = readJsonFile(statePath);

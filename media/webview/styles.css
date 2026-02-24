@@ -174,6 +174,7 @@ body {
 	flex-shrink: 0;
 	min-height: 30px;
 	background: var(--bg);
+	position: relative;
 }
 .toolbar-group {
 	display: flex;
@@ -268,12 +269,42 @@ body {
 .toolbar-btn-text.accept-all:hover {
 	background: var(--green);
 }
-.toolbar-btn.reject-all {
-	opacity: 0.5;
+.toolbar-btn.more-btn {
+	opacity: 0.6;
+	position: relative;
 }
-.toolbar-btn.reject-all:hover {
-	color: #dc3545;
+.toolbar-btn.more-btn:hover {
 	opacity: 1;
+}
+.toolbar-more-menu {
+	display: none;
+	position: absolute;
+	right: 4px;
+	z-index: 100;
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+	min-width: 160px;
+	padding: 4px 0;
+}
+.toolbar-more-menu.open {
+	display: block;
+}
+.toolbar-more-item {
+	padding: 6px 12px;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+	color: var(--fg);
+}
+.toolbar-more-item:hover {
+	background: var(--hover);
+}
+.toolbar-more-item.danger {
+	color: #dc3545;
+}
+.toolbar-more-item.danger:hover {
 	background: var(--red);
 }
 .toolbar-btn-text.warning {
@@ -867,6 +898,58 @@ body {
 	line-height: 1.5;
 }
 .confirm-actions {
+	display: flex;
+	gap: 8px;
+	justify-content: flex-end;
+}
+
+/* ===== ONBOARDING OVERLAY ===== */
+.onboarding-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 400;
+	background: rgba(0, 0, 0, 0.7);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.onboarding-dialog {
+	background: var(--menu-bg);
+	border-radius: 10px;
+	padding: 18px 20px;
+	min-width: 260px;
+	max-width: 340px;
+	border: 1px solid var(--border);
+	box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+}
+.onboarding-path {
+	font-size: 11px;
+	font-family: var(--vscode-editor-font-family, monospace);
+	opacity: 0.6;
+	margin-bottom: 12px;
+	word-break: break-all;
+	line-height: 1.4;
+}
+.onboarding-desc {
+	font-size: 13px;
+	line-height: 1.5;
+	margin-bottom: 14px;
+}
+.onboarding-section {
+	margin-bottom: 14px;
+	border-top: 1px solid var(--border);
+	padding-top: 10px;
+}
+.onboarding-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font-size: 12px;
+}
+.onboarding-row .label {
+	opacity: 0.7;
+}
+.onboarding-actions {
 	display: flex;
 	gap: 8px;
 	justify-content: flex-end;

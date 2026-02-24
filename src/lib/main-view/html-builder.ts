@@ -297,6 +297,24 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
   </div>
 </div>
 
+<!-- ONBOARDING OVERLAY -->
+<div class="onboarding-overlay" id="onboardingOverlay" style="display:none">
+  <div class="onboarding-dialog">
+    <div class="onboarding-path" id="onboardingPath"></div>
+    <p class="onboarding-desc">Do you trust this folder? Claude will be able to read, edit, and run files here.</p>
+    <div class="onboarding-section" id="onboardingHooksRow">
+      <div class="onboarding-row">
+        <span class="label">Install review hooks</span>
+        <label class="toggle"><input type="checkbox" id="onboardingInstallHooks" checked><span class="toggle-slider"></span></label>
+      </div>
+    </div>
+    <div class="onboarding-actions">
+      <button class="btn" id="onboardingCancel">Cancel</button>
+      <button class="btn primary" id="onboardingStart">Trust this folder</button>
+    </div>
+  </div>
+</div>
+
 <script src="${xtermJs}"></script>
 <script src="${fitJs}"></script>
 <script src="${webLinksJs}"></script>

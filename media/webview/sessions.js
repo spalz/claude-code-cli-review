@@ -14,6 +14,10 @@
 		lazyClaudeIds = new Set(lazyIds || []);
 	};
 
+	window._hasOpenSessions = function () {
+		return openClaudeIds.size > 0;
+	};
+
 	window.setActiveClaudeId = function (id) {
 		activeClaudeId = id;
 	};

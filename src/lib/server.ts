@@ -7,8 +7,9 @@ import * as state from "./state";
 import * as log from "./log";
 import { parseBashCommand } from "./bash-file-parser";
 
-const PORT = 27182;
+const DEFAULT_PORT = 27182;
 let server: http.Server | null = null;
+let serverPort = 0;
 let _addFileToReview: ((filePath: string) => void) | null = null;
 let _workspacePath: string | undefined;
 let _getActiveReview: ((filePath: string) => import("../types").IFileReview | undefined) | null = null;
@@ -182,74 +183,39 @@ function createServer(): http.Server {
 	});
 }
 
-function killOldServer(): void {
-	try {
-		const output = execSync(`lsof -ti tcp:${PORT} 2>/dev/null`, {
-			encoding: "utf8",
-			timeout: 3000,
-		}).trim();
-		if (output) {
-			const pids = output
-				.split("\n")
-				.map((p) => p.trim())
-				.filter(Boolean);
-			const myPid = String(process.pid);
-			for (const pid of pids) {
-				if (pid !== myPid) {
-					log.log(`killing old server process on port ${PORT}: PID ${pid}`);
-					try {
-						process.kill(Number(pid), "SIGTERM");
-					} catch {}
-				}
-			}
-		}
-	} catch {}
+export function getServerPort(): number {
+	return serverPort;
 }
 
-export function startServer(): void {
-	killOldServer();
-	server = createServer();
+export function startServer(): Promise<number> {
+	return new Promise((resolve) => {
+		server = createServer();
+		let resolved = false;
 
-	let retries = 0;
-	const MAX_RETRIES = 5;
-
-	function tryListen(): void {
-		server!.listen(PORT, "127.0.0.1", () => {
-			log.log(`server started on :${PORT}`);
-		});
-	}
-
-	server.on("error", (err: NodeJS.ErrnoException) => {
-		if (err.code === "EADDRINUSE") {
-			retries++;
-			if (retries === 1) {
-				log.log(`port ${PORT} still busy after SIGTERM, sending SIGKILL`);
-				try {
-					const output = execSync(`lsof -ti tcp:${PORT} 2>/dev/null`, {
-						encoding: "utf8",
-						timeout: 3000,
-					}).trim();
-					if (output) {
-						for (const pid of output.split("\n")) {
-							if (pid.trim() && pid.trim() !== String(process.pid)) {
-								try {
-									process.kill(Number(pid.trim()), "SIGKILL");
-								} catch {}
-							}
-						}
-					}
-				} catch {}
-				setTimeout(tryListen, 500);
-			} else if (retries <= MAX_RETRIES) {
-				log.log(`port ${PORT} busy, retry ${retries}/${MAX_RETRIES} in 1s...`);
-				setTimeout(tryListen, 1000);
-			} else {
-				log.log(`port ${PORT} busy after ${MAX_RETRIES} retries, giving up.`);
+		server.on("error", (err: NodeJS.ErrnoException) => {
+			if (err.code === "EADDRINUSE" && !resolved) {
+				log.log(`port ${DEFAULT_PORT} busy, falling back to random port`);
+				// Remove stale 'listening' listener from the failed listen() call
+				server!.removeAllListeners("listening");
+				server!.listen(0, "127.0.0.1", () => {
+					const addr = server!.address() as { port: number };
+					serverPort = addr.port;
+					resolved = true;
+					log.log(`server started on :${serverPort} (fallback)`);
+					resolve(serverPort);
+				});
 			}
-		}
-	});
+		});
 
-	setTimeout(tryListen, 300);
+		server.listen(DEFAULT_PORT, "127.0.0.1", () => {
+			if (!resolved) {
+				serverPort = DEFAULT_PORT;
+				resolved = true;
+				log.log(`server started on :${DEFAULT_PORT}`);
+				resolve(DEFAULT_PORT);
+			}
+		});
+	});
 }
 
 export function stopServer(): void {

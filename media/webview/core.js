@@ -96,4 +96,26 @@
 		hideSettings();
 	});
 
+	// Onboarding overlay
+	window.showOnboarding = function (data) {
+		document.getElementById("onboardingPath").textContent = data.workspacePath || data.folderName;
+		document.getElementById("onboardingInstallHooks").checked = !data.hooksInstalled;
+		document.getElementById("onboardingHooksRow").style.display = data.hooksInstalled ? "none" : "";
+		document.getElementById("onboardingOverlay").style.display = "";
+	};
+
+	window.hideOnboarding = function () {
+		document.getElementById("onboardingOverlay").style.display = "none";
+	};
+
+	document.getElementById("onboardingStart").addEventListener("click", function () {
+		var installHooks = document.getElementById("onboardingInstallHooks").checked;
+		hideOnboarding();
+		send("onboarding-complete", { installHooks: installHooks });
+	});
+
+	document.getElementById("onboardingCancel").addEventListener("click", function () {
+		hideOnboarding();
+	});
+
 })();

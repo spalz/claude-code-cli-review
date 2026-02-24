@@ -34,6 +34,7 @@ export type ExtensionToWebviewMessage =
 	| { type: "restore-view-mode"; mode: string }
 	| { type: "lazy-session-ready"; placeholderPtyId: number; realPtyId: number; claudeId: string }
 	| { type: "activate-lazy-session"; claudeId: string }
+	| { type: "show-onboarding"; folderName: string; workspacePath: string; hooksInstalled: boolean }
 ;
 
 export type WebviewToExtensionMessage =
@@ -72,6 +73,7 @@ export type WebviewToExtensionMessage =
 	| { type: "review-next-file" }
 	| { type: "accept-all-confirm" }
 	| { type: "reject-all-confirm" }
+	| { type: "dismiss-all-confirm" }
 	| { type: "keep-current-file" }
 	| { type: "undo-current-file" }
 	| { type: "check-hook-status" }
@@ -84,4 +86,5 @@ export type WebviewToExtensionMessage =
 	| { type: "lazy-resume"; claudeId: string; placeholderPtyId: number }
 	| { type: "open-external-url"; url: string }
 	| { type: "open-file-link"; path: string; line?: number; column?: number }
-	| { type: "diag-log"; category: string; message: string; data: Record<string, unknown> | null; timestamp: number };
+	| { type: "diag-log"; category: string; message: string; data: Record<string, unknown> | null; timestamp: number }
+	| { type: "onboarding-complete"; installHooks: boolean };
