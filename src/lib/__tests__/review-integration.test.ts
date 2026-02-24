@@ -210,12 +210,14 @@ describe("persistence round-trip", () => {
 		expect(result).toBe(true);
 		const review = state.activeReviews.get("/ws/deleted.ts");
 		expect(review?.changeType).toBe("delete");
+		// New behavior: removed lines ARE in buffer for unresolved pure-delete hunks
 		expect(review?.mergedLines).toEqual(["line1", "line2", "line3"]);
 		expect(review?.hunkRanges).toHaveLength(1);
+		// removedEnd > removedStart since removed lines are now in buffer
 		expect(review?.hunkRanges[0].removedStart).toBe(0);
 		expect(review?.hunkRanges[0].removedEnd).toBe(3);
-		// No trailing empty string — critical for correct display
-		expect(review?.mergedLines).not.toContain("");
+		expect(review?.hunkRanges[0].addedStart).toBe(3);
+		expect(review?.hunkRanges[0].addedEnd).toBe(3);
 	});
 
 	it("save → restore → accept edit → correct file content", async () => {

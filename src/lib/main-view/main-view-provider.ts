@@ -17,6 +17,7 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 	private _pendingHookStatus: HookStatus | null = null;
 	private readonly _sessionMgr: SessionManager;
 	private _reviewManager: ReviewManager | undefined;
+	private readonly _workspaceState: vscode.Memento | undefined;
 
 	constructor(
 		private readonly _wp: string,
@@ -24,6 +25,7 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 		private readonly _ptyManager: PtyManager,
 		workspaceState: vscode.Memento | undefined,
 	) {
+		this._workspaceState = workspaceState;
 		this._sessionMgr = new SessionManager(_wp, _ptyManager, workspaceState, (msg) =>
 			this._postMessage(msg),
 		);
@@ -58,6 +60,7 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 				getKeybindings,
 				webviewReady: this._webviewReady,
 				pendingHookStatus: this._pendingHookStatus,
+				workspaceState: this._workspaceState,
 			});
 			this._webviewReady = result.webviewReady;
 			this._pendingHookStatus = result.pendingHookStatus;
@@ -119,12 +122,14 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private _sendStateUpdate(): void {
+		const t0 = performance.now();
 		const payload = buildStateUpdate(this._wp, this._ptyManager, this._reviewManager);
 		this._postMessage({
 			type: "state-update",
 			review: payload.review,
 			activeSessions: payload.activeSessions,
 		});
+		log.log(`MainView.stateUpdate: remaining=${payload.review.remaining}/${payload.review.total}, hunks=${payload.review.unresolvedHunks}/${payload.review.totalHunks}, activeInReview=${payload.review.activeEditorInReview}, ${(performance.now() - t0).toFixed(1)}ms`);
 	}
 
 	private _postMessage(msg: ExtensionToWebviewMessage): void {

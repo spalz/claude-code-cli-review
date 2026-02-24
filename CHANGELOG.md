@@ -2,7 +2,7 @@
 
 All notable changes to the "Claude Code with Review" extension will be documented in this file.
 
-## [8.0.0] — 2026-02-23
+## [0.5.0] — 2026-02-24
 
 ### Initial Public Release
 

@@ -146,9 +146,15 @@ export async function handleDeletion(mgr: ReviewManagerInternal, absFilePath: st
 	};
 
 	const review = new FileReview(absFilePath, originalContent, "", [hunk], "delete");
-	// For delete reviews, merged content shows all lines as removed
+	// For delete reviews, merged content is empty (all lines removed, nothing added).
+	// Hover-based approach: removed lines shown via hover, buffer stays empty.
 	const { lines, ranges } = buildMergedContent([], [hunk]);
-	review.mergedLines = lines;
+	// VS Code always reports lineCount >= 1 even for empty files, so ensure at least [""]
+	review.mergedLines = lines.length === 0 ? [""] : lines;
+	// For pure deletions (added=[]), add a range pointing at line 0 so hover shows removed content
+	if (ranges.length === 0) {
+		ranges.push({ hunkId: hunk.id, removedStart: 0, removedEnd: 0, addedStart: 0, addedEnd: 0 });
+	}
 	review.hunkRanges = ranges;
 
 	state.activeReviews.set(absFilePath, review);

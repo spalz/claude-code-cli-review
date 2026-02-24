@@ -4,7 +4,7 @@ export interface PtySessionInfo {
 }
 
 export type PtyDataHandler = (sessionId: number, data: string) => void;
-export type PtyExitHandler = (sessionId: number, exitCode: number) => void;
+export type PtyExitHandler = (sessionId: number, exitCode: number, ageMs?: number) => void;
 
 export interface INodePty {
 	spawn(

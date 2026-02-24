@@ -17,13 +17,15 @@ export async function resolveHunk(
 	hunkId: number,
 	accept: boolean,
 ): Promise<void> {
+	const tResolve = performance.now();
 	const review = state.activeReviews.get(filePath);
 	if (!review) return;
 	const hunk = review.hunks.find((h) => h.id === hunkId);
 	if (!hunk || hunk.resolved) return;
 
+	const fname = filePath.split("/").pop();
 	const preHunkState = review.hunks.map((h) => `${h.id}:${h.resolved ? "R" : "U"}`).join(",");
-	log.log(`ReviewManager.resolveHunk: BEFORE push, hunks=[${preHunkState}], about to resolve hunkId=${hunkId}`);
+	log.log(`ReviewManager.resolveHunk: START ${fname} hunkId=${hunkId} accept=${accept}, hunks=[${preHunkState}]`);
 	pushUndoState(filePath, review);
 
 	hunk.resolved = true;
@@ -52,9 +54,7 @@ export async function resolveHunk(
 		}
 		// Reveal the next unresolved hunk to prevent scroll jumping
 		const nextRange = review.hunkRanges[mgr.currentHunkIndex];
-		const revealLine = nextRange
-			? (nextRange.removedStart < nextRange.removedEnd ? nextRange.removedStart : nextRange.addedStart)
-			: undefined;
+		const revealLine = nextRange ? nextRange.addedStart : undefined;
 
 		// Try targeted edit: delete only the resolved hunk's lines (no full-buffer replace)
 		let applied = false;
@@ -70,19 +70,37 @@ export async function resolveHunk(
 			log.log(`resolveHunk: no visible editor for ${filePath}, will use applyContentViaEdit`);
 		}
 		if (resolvedRange && !bufferDiverged) {
-			const deleteStart = accept ? resolvedRange.removedStart : resolvedRange.addedStart;
-			const deleteEnd = accept ? resolvedRange.removedEnd : resolvedRange.addedEnd;
-			log.log(`resolveHunk: targeted edit deleteStart=${deleteStart}, deleteEnd=${deleteEnd}, accept=${accept}`);
-			if (deleteStart < deleteEnd) {
-				applied = await applyTargetedHunkEdit(mgr, filePath, deleteStart, deleteEnd, revealLine);
-				log.log(`resolveHunk: targeted edit result=${applied}`);
-			} else {
-				// No lines to delete (pure addition accepted / pure deletion rejected).
-				log.log(`resolveHunk: no lines to delete (pure ${accept ? "addition" : "deletion"}), decorations only`);
+			const isPureDeletion = resolvedRange.removedStart < resolvedRange.removedEnd
+				&& resolvedRange.addedStart === resolvedRange.addedEnd;
+			if (accept && !isPureDeletion) {
+				// Accept: added lines already in buffer (hover-based approach),
+				// no removed lines to delete. Just update decorations.
+				log.log(`resolveHunk: accept — no buffer change needed (hover-based), decorations only`);
 				if (editor) applyDecorations(editor, review);
 				mgr.syncState();
 				mgr.refreshUI();
 				applied = true;
+			} else if (accept && isPureDeletion) {
+				// Accept pure-delete: removed lines are in buffer, need full replace to remove them
+				log.log(`resolveHunk: accept pure-deletion — need buffer update, falling through`);
+				applied = false;
+			} else {
+				// Reject: delete added lines from buffer, removed lines will be
+				// inserted by the full-buffer replace fallback (rebuildMerged already ran)
+				const deleteStart = resolvedRange.addedStart;
+				const deleteEnd = resolvedRange.addedEnd;
+				log.log(`resolveHunk: reject targeted edit deleteStart=${deleteStart}, deleteEnd=${deleteEnd}`);
+				if (deleteStart < deleteEnd) {
+					// Use full-buffer replace since we need to insert removed lines too
+					applied = false; // fall through to full-buffer replace
+				} else {
+					// Pure deletion rejected — nothing in buffer, just decorations
+					log.log(`resolveHunk: reject pure deletion, decorations only`);
+					if (editor) applyDecorations(editor, review);
+					mgr.syncState();
+					mgr.refreshUI();
+					applied = true;
+				}
 			}
 		}
 		// Fallback: full-buffer replace (e.g. no editor open, or targeted edit failed)
@@ -92,6 +110,7 @@ export async function resolveHunk(
 		}
 	}
 	mgr.scheduleSave();
+	log.log(`ReviewManager.resolveHunk: END ${fname} hunkId=${hunkId}, total=${(performance.now() - tResolve).toFixed(1)}ms`);
 }
 
 export async function resolveAllHunks(
@@ -148,9 +167,10 @@ export async function finalizeFile(mgr: ReviewManagerInternal, filePath: string)
 		clearDecorations(editor);
 	}
 
-	mgr.refreshUI();
-
 	// Move to next unresolved file
+	// NOTE: We defer refreshUI until AFTER the next file is opened (or confirmed absent).
+	// Calling refreshUI here would briefly show "Review next file" in the webview
+	// because the current file is already finalized but the next hasn't opened yet.
 	const next = mgr.reviewFiles.find((f) => state.activeReviews.has(f));
 	if (next) {
 		mgr.currentFileIndex = mgr.reviewFiles.indexOf(next);

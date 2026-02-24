@@ -55,7 +55,7 @@ function createServer(): http.Server {
 			res.end(
 				JSON.stringify({
 					ok: true,
-					version: "8.0.0",
+					version: "0.5.0",
 					reviewActive: state.activeReviews.size > 0,
 					filesRemaining: files.filter((f) => state.activeReviews.has(f)).length,
 				}),

@@ -8,6 +8,9 @@ import type { ExtensionToWebviewMessage } from "../../types";
 
 export class SessionManager {
 	private readonly _ptyToClaudeId = new Map<number, string>();
+	/** All open claude IDs (real PTY + lazy placeholders). Source of truth for persistence & UI. */
+	private readonly _allOpenClaudeIds = new Set<string>();
+	private _restored = false;
 	private _namesWatcher: fs.FSWatcher | null = null;
 	private _namesDebounce: ReturnType<typeof setTimeout> | null = null;
 	private _cachedNames: Record<string, string> = {};
@@ -18,17 +21,22 @@ export class SessionManager {
 		private readonly _ptyManager: PtyManager,
 		private readonly _workspaceState: vscode.Memento | undefined,
 		private readonly _postMessage: (msg: ExtensionToWebviewMessage) => void,
-	) {}
+	) {
+		// Eagerly load saved open session IDs so refreshClaudeSessions() shows
+		// correct "open" indicators before terminals are lazily restored.
+		const saved = this._workspaceState?.get<string[]>("ccr.openSessions") || [];
+		for (const id of saved) this._allOpenClaudeIds.add(id);
+	}
 
 	refreshClaudeSessions(): void {
-		const openIds = new Set(this._ptyToClaudeId.values());
+		const openIds = this._allOpenClaudeIds;
 		const { sessions, archivedCount } = listSessions(this._wp, 30, 0, openIds);
 		log.log(`refreshClaudeSessions: found ${sessions.length} sessions, ${archivedCount} archived`);
 		this._postMessage({ type: "sessions-list", sessions, archivedCount });
 		this.sendOpenSessionIds();
 	}
 
-	startNewClaudeSession(resumeId?: string): void {
+	startNewClaudeSession(resumeId?: string, restoring?: boolean): void {
 		const t0 = Date.now();
 		const cli = vscode.workspace
 			.getConfiguration("claudeCodeReview")
@@ -43,6 +51,7 @@ export class SessionManager {
 
 		if (resumeId) {
 			this._ptyToClaudeId.set(info.id, resumeId);
+			this._allOpenClaudeIds.add(resumeId);
 		}
 
 		this._persistOpenSessions();
@@ -51,7 +60,8 @@ export class SessionManager {
 			sessionId: info.id,
 			name: info.name,
 			claudeId: resumeId || null,
-		});
+			...(restoring ? { restoring: true } : {}),
+		} as ExtensionToWebviewMessage);
 		this.sendOpenSessionIds();
 		state.refreshAll();
 		log.log(`startNewClaudeSession: resume=${resumeId || "none"}, pty=${info.id}, ${Date.now() - t0}ms`);
@@ -68,17 +78,40 @@ export class SessionManager {
 		return null;
 	}
 
+	/** Check if a claude session has a lazy placeholder in the webview (restored but no PTY) */
+	isLazyPlaceholder(claudeId: string): boolean {
+		return this._restored && this._allOpenClaudeIds.has(claudeId) && this.findPtyByClaudeId(claudeId) === null;
+	}
+
 	sendOpenSessionIds(): void {
-		const openClaudeIds = [...this._ptyToClaudeId.values()];
-		log.log(`sendOpenSessionIds: [${openClaudeIds.map((id) => id.slice(0, 8)).join(", ")}]`);
-		this._postMessage({ type: "open-sessions-update", openClaudeIds });
+		const openClaudeIds = [...this._allOpenClaudeIds];
+		const ptyIds = new Set(this._ptyToClaudeId.values());
+		const lazyClaudeIds = openClaudeIds.filter((id) => !ptyIds.has(id));
+		log.log(`sendOpenSessionIds: [${openClaudeIds.map((id) => id.slice(0, 8)).join(", ")}], lazy=[${lazyClaudeIds.map((id) => id.slice(0, 8)).join(", ")}]`);
+		this._postMessage({ type: "open-sessions-update", openClaudeIds, lazyClaudeIds });
 	}
 
 	removeOpenSession(ptySessionId: number): void {
 		log.log(
 			`removeOpenSession: pty=${ptySessionId}, claude=${this._ptyToClaudeId.get(ptySessionId) || "?"}`,
 		);
+		const claudeId = this._ptyToClaudeId.get(ptySessionId);
 		this._ptyToClaudeId.delete(ptySessionId);
+		if (claudeId) this._allOpenClaudeIds.delete(claudeId);
+		this._persistOpenSessions();
+	}
+
+	/** Remove an open session by claude ID (works for lazy placeholders without PTY) */
+	removeOpenSessionByClaudeId(claudeId: string): void {
+		log.log(`removeOpenSessionByClaudeId: ${claudeId.slice(0, 8)}`);
+		this._allOpenClaudeIds.delete(claudeId);
+		// Also clean up PTY mapping if one exists
+		for (const [ptyId, cId] of this._ptyToClaudeId) {
+			if (cId === claudeId) {
+				this._ptyToClaudeId.delete(ptyId);
+				break;
+			}
+		}
 		this._persistOpenSessions();
 	}
 
@@ -88,28 +121,97 @@ export class SessionManager {
 	}
 
 	restoreSessions(): void {
+		if (this._restored) {
+			log.log("restoreSessions: already restored, skipping");
+			return;
+		}
+		this._restored = true;
 		const t0 = Date.now();
-		const ids = this._workspaceState?.get<string[]>("ccr.openSessions") || [];
+		const ids = [...new Set(this._workspaceState?.get<string[]>("ccr.openSessions") || [])];
 		const activeClaudeId = this._workspaceState?.get<string>("ccr.activeSession") || null;
 		log.log(
 			`restoreSessions: ${ids.length} sessions to restore: [${ids.join(", ")}], active=${activeClaudeId || "none"}`,
 		);
 
-		for (const claudeId of ids) {
-			this.startNewClaudeSession(claudeId);
-		}
-		log.log(`restoreSessions: ${ids.length} restored in ${Date.now() - t0}ms`);
+		// Only start PTY for the active session; others get placeholder tabs
+		const activeId = activeClaudeId && ids.includes(activeClaudeId) ? activeClaudeId : ids[0];
 
-		if (activeClaudeId) {
-			const ptyId = this.findPtyByClaudeId(activeClaudeId);
-			if (ptyId !== null) {
-				log.log(`restoreSessions: activating saved active session pty #${ptyId}`);
+		// Register all IDs as open before starting any PTYs
+		for (const claudeId of ids) {
+			this._allOpenClaudeIds.add(claudeId);
+		}
+
+		for (const claudeId of ids) {
+			// Skip if already opened (e.g., user clicked resume before restore ran)
+			if (this.findPtyByClaudeId(claudeId) !== null) {
+				log.log(`restoreSessions: ${claudeId.slice(0, 8)} already has PTY, skipping`);
+				continue;
+			}
+			if (claudeId === activeId) {
+				this.startNewClaudeSession(claudeId, true);
+			} else {
+				// Send placeholder tab without spawning PTY
+				log.log(`restoreSessions: lazy placeholder for ${claudeId.slice(0, 8)}`);
 				this._postMessage({
-					type: "activate-terminal",
-					sessionId: ptyId,
-				});
+					type: "terminal-session-created",
+					sessionId: -1, // sentinel — no real PTY yet
+					name: `resume:${claudeId.slice(0, 8)}`,
+					claudeId,
+					restoring: true,
+					lazy: true,
+				} as ExtensionToWebviewMessage);
 			}
 		}
+
+		this._persistOpenSessions();
+		this.sendOpenSessionIds();
+		log.log(`restoreSessions: ${ids.length} restored (1 active, ${ids.length - 1} lazy) in ${Date.now() - t0}ms`);
+
+		// Activate the real session
+		const activePtyId = this.findPtyByClaudeId(activeId);
+		if (activePtyId !== null) {
+			log.log(`restoreSessions: activating active session pty #${activePtyId}`);
+			this._postMessage({
+				type: "activate-terminal",
+				sessionId: activePtyId,
+			});
+		}
+	}
+
+	/** Spawn a real PTY for a lazy placeholder tab */
+	lazyResume(claudeId: string, placeholderPtyId: number): void {
+		// Check not already loaded
+		if (this.findPtyByClaudeId(claudeId) !== null) {
+			log.log(`lazyResume: ${claudeId.slice(0, 8)} already has a PTY, activating`);
+			const ptyId = this.findPtyByClaudeId(claudeId)!;
+			this._postMessage({ type: "activate-terminal", sessionId: ptyId });
+			return;
+		}
+
+		const cli = vscode.workspace
+			.getConfiguration("claudeCodeReview")
+			.get<string>("cliCommand", "claude");
+		const cmd = `${cli} --resume ${claudeId}`;
+		log.log(`lazyResume: spawning ${claudeId.slice(0, 8)}, cmd=${cmd}`);
+
+		const info = this._ptyManager.createSession(
+			`resume:${claudeId.slice(0, 8)}`,
+			cmd,
+		);
+		this._ptyToClaudeId.set(info.id, claudeId);
+		this._allOpenClaudeIds.add(claudeId);
+		this._persistOpenSessions();
+
+		// Tell webview to replace placeholder with real session
+		this._postMessage({
+			type: "lazy-session-ready",
+			placeholderPtyId,
+			realPtyId: info.id,
+			claudeId,
+		} as ExtensionToWebviewMessage);
+
+		this.sendOpenSessionIds();
+		state.refreshAll();
 	}
 
 	getPtyToClaudeId(): Map<number, string> {
@@ -154,6 +256,7 @@ export class SessionManager {
 
 					log.log(`detected new claude session: ${sessionId.slice(0, 8)} for pty #${ptyId}`);
 					this._ptyToClaudeId.set(ptyId, sessionId);
+					this._allOpenClaudeIds.add(sessionId);
 					this._persistOpenSessions();
 					this._postMessage({
 						type: "update-terminal-claude-id",
@@ -180,7 +283,7 @@ export class SessionManager {
 				// Detect changes to open session .jsonl files (e.g., Claude auto-title via summary)
 				if (filename?.endsWith(".jsonl")) {
 					const sessionId = filename.replace(".jsonl", "");
-					if (this._ptyToClaudeId.size > 0 && [...this._ptyToClaudeId.values()].includes(sessionId)) {
+					if (this._allOpenClaudeIds.has(sessionId)) {
 						if (this._jsonlDebounce) clearTimeout(this._jsonlDebounce);
 						this._jsonlDebounce = setTimeout(() => this.refreshClaudeSessions(), 2000);
 					}
@@ -198,7 +301,7 @@ export class SessionManager {
 
 	private _syncTabNames(): void {
 		const names = loadSessionNames(this._wp);
-		for (const [, claudeId] of this._ptyToClaudeId) {
+		for (const claudeId of this._allOpenClaudeIds) {
 			const newName = names[claudeId];
 			if (newName && newName !== this._cachedNames[claudeId]) {
 				log.log(`names-sync: ${claudeId.slice(0, 8)} -> "${newName}"`);
@@ -213,7 +316,7 @@ export class SessionManager {
 	}
 
 	private _persistOpenSessions(): void {
-		const ids = [...this._ptyToClaudeId.values()];
+		const ids = [...this._allOpenClaudeIds];
 		log.log(`persistOpenSessions: ${ids.length} sessions saved`);
 		this._workspaceState?.update("ccr.openSessions", ids);
 	}

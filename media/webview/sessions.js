@@ -5,11 +5,13 @@
 	var cachedSessions = [];
 	var cachedArchivedSessions = [];
 	var openClaudeIds = new Set();
+	var lazyClaudeIds = new Set();
 	var activeClaudeId = null;
 	var ctxTarget = null;
 
-	window.updateOpenClaudeIds = function (ids) {
+	window.updateOpenClaudeIds = function (ids, lazyIds) {
 		openClaudeIds = new Set(ids || []);
+		lazyClaudeIds = new Set(lazyIds || []);
 	};
 
 	window.setActiveClaudeId = function (id) {
@@ -49,16 +51,18 @@
 			var msgs = s.messageCount ? s.messageCount + " msgs" : "";
 			var meta = [ago, msgs].filter(Boolean).join(" \u00b7 ");
 			var isOpen = openClaudeIds.has(s.id);
+			var isLazy = lazyClaudeIds.has(s.id);
 			var isActive = s.id === activeClaudeId;
 			var isRenaming = s.id === renamingId;
+			var dotClass = isOpen ? (isLazy ? "lazy" : "active") : "past";
 			html +=
 				'<div class="session-item' + (isActive ? " open" : "") + (isRenaming ? " renaming" : "") + '" data-sid="' + s.id + '">';
-			html += '<span class="dot ' + (isOpen ? "active" : "past") + '"></span>';
+			html += '<span class="dot ' + dotClass + '"></span>';
 			html += '<div class="info"><div class="session-title">' + esc(s.title) + "</div>";
 			html +=
 				'<div class="session-meta">' +
 				esc(meta) +
-				(isOpen ? " &middot; running" : "") +
+				(isOpen ? (isLazy ? " &middot; suspended" : " &middot; running") : "") +
 				"</div></div>";
 			if (s.branch) html += '<span class="branch">' + esc(s.branch) + "</span>";
 			html += "</div>";
@@ -264,8 +268,13 @@
 		send("refresh-sessions");
 	};
 
+	window._sessionsRestored = false;
 	window.showTerminalView = function () {
 		switchMode("terminals");
+		if (!window._sessionsRestored) {
+			window._sessionsRestored = true;
+			send("request-restore-sessions");
+		}
 	};
 
 	// --- Header button listeners ---

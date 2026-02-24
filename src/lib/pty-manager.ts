@@ -50,6 +50,7 @@ class PtySession {
 	readonly id: number;
 	readonly name: string;
 	readonly process: IPtyProcess;
+	readonly createdAt: number = Date.now();
 
 	constructor(
 		id: number,
@@ -169,8 +170,9 @@ export class PtyManager {
 				this._onData?.(sid, data);
 			},
 			(sid, code) => {
+				const age = this.getSessionAge(sid);
 				this._sessions.delete(sid);
-				this._onExit?.(sid, code);
+				this._onExit?.(sid, code, age);
 			},
 			command,
 		);
@@ -201,6 +203,12 @@ export class PtyManager {
 			id: s.id,
 			name: s.name,
 		}));
+	}
+
+	/** Get session age in ms (from creation). Returns 0 if session not found. */
+	getSessionAge(id: number): number {
+		const s = this._sessions.get(id);
+		return s ? Date.now() - s.createdAt : 0;
 	}
 
 	dispose(): void {

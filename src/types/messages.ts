@@ -6,7 +6,7 @@ import type { PtySessionInfo } from "./pty";
 export type ExtensionToWebviewMessage =
 	| { type: "sessions-list"; sessions: SessionInfo[]; archivedCount: number }
 	| { type: "archived-sessions-list"; sessions: SessionInfo[] }
-	| { type: "open-sessions-update"; openClaudeIds: string[] }
+	| { type: "open-sessions-update"; openClaudeIds: string[]; lazyClaudeIds?: string[] }
 	| { type: "activate-terminal"; sessionId: number }
 	| {
 			type: "terminal-session-created";
@@ -31,6 +31,9 @@ export type ExtensionToWebviewMessage =
 			review: ReviewStateUpdate;
 			activeSessions: PtySessionInfo[];
 	  }
+	| { type: "restore-view-mode"; mode: string }
+	| { type: "lazy-session-ready"; placeholderPtyId: number; realPtyId: number; claudeId: string }
+	| { type: "activate-lazy-session"; claudeId: string }
 ;
 
 export type WebviewToExtensionMessage =
@@ -76,4 +79,9 @@ export type WebviewToExtensionMessage =
 	| { type: "set-claude-runtime"; key: string; value: unknown }
 	| { type: "get-claude-settings-scoped"; scope: string }
 	| { type: "set-terminal-setting"; key: string; value: unknown }
+	| { type: "set-view-mode"; mode: string }
+	| { type: "request-restore-sessions" }
+	| { type: "lazy-resume"; claudeId: string; placeholderPtyId: number }
+	| { type: "open-external-url"; url: string }
+	| { type: "open-file-link"; path: string; line?: number; column?: number }
 	| { type: "diag-log"; category: string; message: string; data: Record<string, unknown> | null; timestamp: number };

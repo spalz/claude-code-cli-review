@@ -95,10 +95,10 @@ yarn build:prod
 yarn watch
 
 # Install to VS Code
-cp -r . ~/.vscode/extensions/local.claude-code-review-8.0.0/
+cp -r . ~/.vscode/extensions/local.claude-code-review-0.5.0/
 
 # Install to Cursor
-cp -r . ~/.cursor/extensions/local.claude-code-review-8.0.0/
+cp -r . ~/.cursor/extensions/local.claude-code-review-0.5.0/
 
 # Reload editor
 # Cmd+Shift+P → Developer: Reload Window

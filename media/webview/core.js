@@ -19,9 +19,12 @@
 	// View mode management (replaces tab system)
 	window.viewMode = "sessions";
 
-	window.switchMode = function (mode) {
+	window.switchMode = function (mode, skipPersist) {
 		var previousMode = window.viewMode;
 		window.viewMode = mode;
+		if (!skipPersist) {
+			send("set-view-mode", { mode: mode });
+		}
 		if (window.diagLog) diagLog("view", "switchMode", { from: previousMode, to: mode });
 		var sessionMode = document.getElementById("headerSessionMode");
 		var terminalMode = document.getElementById("headerTerminalMode");

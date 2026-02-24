@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import * as log from "../log";
 import * as state from "../state";
 
-import { popUndoState, pushRedoState, popRedoState, pushUndoState } from "../undo-history";
+import { popUndoState, pushRedoState, popRedoState, pushUndoState, getLastUndoFilePath, getLastRedoFilePath, hasUndoState, hasRedoState } from "../undo-history";
 import { FileReview } from "../review";
 import { applyContentViaEdit } from "./content-application";
 import { finalizeFile } from "./hunk-resolution";
@@ -11,9 +11,27 @@ import type { ReviewManagerInternal } from "./types";
 import type { ReviewSnapshot } from "../../types";
 
 export async function undoResolve(mgr: ReviewManagerInternal): Promise<void> {
+	const tUndo = performance.now();
 	const editor = vscode.window.activeTextEditor;
-	if (!editor) return;
-	const fsPath = editor.document.uri.fsPath;
+	const activeFile = editor?.document.uri.fsPath;
+
+	// Cross-file undo: if active file has no undo state, try last global entry
+	const lastUndoFile = getLastUndoFilePath();
+	const fsPath = (activeFile && hasUndoState(activeFile))
+		? activeFile
+		: lastUndoFile;
+
+	if (!fsPath || !hasUndoState(fsPath)) {
+		log.log(`ReviewManager.undoResolve: no undo state available (active=${activeFile}, lastGlobal=${lastUndoFile})`);
+		vscode.window.setStatusBarMessage("$(info) Nothing to undo", 2000);
+		return;
+	}
+
+	// If target file is different from active editor, open it first
+	if (fsPath !== activeFile) {
+		log.log(`ReviewManager.undoResolve: cross-file undo, opening ${fsPath}`);
+		await vscode.window.showTextDocument(vscode.Uri.file(fsPath));
+	}
 
 	const currentReview = state.activeReviews.get(fsPath);
 
@@ -41,15 +59,34 @@ export async function undoResolve(mgr: ReviewManagerInternal): Promise<void> {
 	// Reveal first unresolved hunk from the restored snapshot
 	const firstRange = snapshot.hunkRanges[0];
 	const revealLine = firstRange
-		? (firstRange.removedStart < firstRange.removedEnd ? firstRange.removedStart : firstRange.addedStart)
+		? (firstRange.addedStart)
 		: undefined;
 	await applyContentViaEdit(mgr, fsPath, snapshot.mergedLines.join("\n"), revealLine);
+	log.log(`ReviewManager.undoResolve: END total=${(performance.now() - tUndo).toFixed(1)}ms`);
 }
 
 export async function redoResolve(mgr: ReviewManagerInternal): Promise<void> {
+	const tRedo = performance.now();
 	const editor = vscode.window.activeTextEditor;
-	if (!editor) return;
-	const fsPath = editor.document.uri.fsPath;
+	const activeFile = editor?.document.uri.fsPath;
+
+	// Cross-file redo: if active file has no redo state, try last global entry
+	const lastRedoFile = getLastRedoFilePath();
+	const fsPath = (activeFile && hasRedoState(activeFile))
+		? activeFile
+		: lastRedoFile;
+
+	if (!fsPath || !hasRedoState(fsPath)) {
+		log.log(`ReviewManager.redoResolve: no redo state available (active=${activeFile}, lastGlobal=${lastRedoFile})`);
+		vscode.window.setStatusBarMessage("$(info) Nothing to redo", 2000);
+		return;
+	}
+
+	// If target file is different from active editor, open it first
+	if (fsPath !== activeFile) {
+		log.log(`ReviewManager.redoResolve: cross-file redo, opening ${fsPath}`);
+		await vscode.window.showTextDocument(vscode.Uri.file(fsPath));
+	}
 
 	const currentReview = state.activeReviews.get(fsPath);
 	const snapshot = popRedoState(fsPath);
@@ -80,10 +117,11 @@ export async function redoResolve(mgr: ReviewManagerInternal): Promise<void> {
 		// Reveal first unresolved hunk from the restored snapshot
 		const firstRange = snapshot.hunkRanges[0];
 		const revealLine = firstRange
-			? (firstRange.removedStart < firstRange.removedEnd ? firstRange.removedStart : firstRange.addedStart)
+			? (firstRange.addedStart)
 			: undefined;
 		await applyContentViaEdit(mgr, fsPath, snapshot.mergedLines.join("\n"), revealLine);
 	}
+	log.log(`ReviewManager.redoResolve: END total=${(performance.now() - tRedo).toFixed(1)}ms`);
 }
 
 export function restoreFromSnapshot(mgr: ReviewManagerInternal, fsPath: string, snapshot: ReviewSnapshot): void {
@@ -114,7 +152,11 @@ export function restoreFromSnapshot(mgr: ReviewManagerInternal, fsPath: string, 
 	const rangeDetail = (review as FileReview).hunkRanges.map((r) => `h${r.hunkId}@${r.removedStart}-${r.removedEnd}/${r.addedStart}-${r.addedEnd}`).join(", ");
 	log.log(`ReviewManager.restoreFromSnapshot: hunks=[${hunkDetail}], ranges=[${rangeDetail}]`);
 
-	mgr.syncState();
-	mgr.refreshUI();
+	// NOTE: We intentionally do NOT call syncState/refreshUI here.
+	// The caller (undoResolve/redoResolve) will call applyContentViaEdit
+	// which updates the buffer first, THEN calls syncState + refreshUI.
+	// Calling refreshUI before the buffer is updated causes CodeLens to
+	// flash at wrong positions (the hunkRanges reference new content but
+	// the buffer still has old content).
 	mgr.scheduleSave();
 }

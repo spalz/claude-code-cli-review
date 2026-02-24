@@ -4,7 +4,7 @@ import * as state from "./lib/state";
 import { ReviewCodeLensProvider } from "./lib/codelens";
 import { MainViewProvider } from "./lib/main-view";
 import { PtyManager } from "./lib/pty-manager";
-import { applyDecorations, clearDecorations } from "./lib/decorations";
+import { applyDecorations, clearDecorations, initDecorations } from "./lib/decorations";
 import { startServer, stopServer, setAddFileHandler, setWorkspacePath, setGetActiveReviewHandler } from "./lib/server";
 import { checkAndPrompt, doInstall } from "./lib/hooks";
 import { ReviewManager } from "./lib/review-manager";
@@ -19,6 +19,7 @@ let reviewManager: ReviewManager | undefined;
 export function activate(context: vscode.ExtensionContext): void {
 	log.init();
 	log.log("activating...");
+	initDecorations(context.extensionPath);
 
 	const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 	if (!workspacePath) {
@@ -56,10 +57,17 @@ export function activate(context: vscode.ExtensionContext): void {
 		// Wire pty output to webview
 		ptyManager.setHandlers(
 			(sessionId, data) => mainView.sendTerminalOutput(sessionId, data),
-			(sessionId, code) => {
+			(sessionId, code, ageMs) => {
 				mainView.sendTerminalExit(sessionId, code);
 				mainView.removeOpenSession(sessionId);
 				state.refreshAll();
+				// Quick exit (< 5s) likely means the session is already completed or unavailable
+				if (ageMs !== undefined && ageMs < 5000 && code === 0) {
+					log.log(`PTY quick exit: session=${sessionId}, age=${ageMs}ms — session likely completed`);
+					vscode.window.showWarningMessage(
+						"Claude session exited immediately — it may already be completed. Start a new session instead.",
+					);
+				}
 			},
 		);
 
@@ -71,6 +79,23 @@ export function activate(context: vscode.ExtensionContext): void {
 			vscode.languages.registerCodeLensProvider({ scheme: "file" }, codeLens),
 		);
 
+
+		// --- Move to secondary sidebar on first install ---
+		const movedKey = "ccr.movedToSecondarySidebar";
+		if (!context.globalState.get<boolean>(movedKey)) {
+			context.globalState.update(movedKey, true);
+			setTimeout(async () => {
+				try {
+					await vscode.commands.executeCommand(
+						"vscode.moveViews",
+						{ viewIds: ["ccr.main"], destinationId: "workbench.panel.auxiliarybar" },
+					);
+					await vscode.commands.executeCommand("ccr.main.focus");
+				} catch {
+					// Command may not exist in older VS Code / Cursor
+				}
+			}, 1000);
+		}
 
 		// --- setContext for keybindings ---
 		reviewManager.onReviewStateChange((hasActive) => {
@@ -191,6 +216,15 @@ export function activate(context: vscode.ExtensionContext): void {
 		// --- Re-apply decorations on tab switch + refresh toolbar state ---
 		context.subscriptions.push(
 			vscode.window.onDidChangeActiveTextEditor((editor) => {
+				// Skip processing during managed transitions (resolve, undo, redo, navigate)
+				// These operations handle their own decorations and state updates.
+				if (reviewManager?.isTransitioning) {
+					const fname = editor?.document.uri.fsPath.split("/").pop() ?? "(none)";
+					log.log(`onTabSwitch: SUPPRESSED (transitioning) ${fname}`);
+					return;
+				}
+				const tTab = performance.now();
+				const fname = editor?.document.uri.fsPath.split("/").pop() ?? "(none)";
 				if (editor) {
 					const filePath = editor.document.uri.fsPath;
 					const review = state.activeReviews.get(filePath);
@@ -200,6 +234,7 @@ export function activate(context: vscode.ExtensionContext): void {
 							applyDecorations(editor, review);
 						} else {
 							// Content doesn't match — self-heal by reapplying merged content
+							log.log(`onTabSwitch: content mismatch for ${fname}, self-healing`);
 							clearDecorations(editor);
 							void reviewManager!.ensureMergedContent(filePath);
 						}
@@ -208,6 +243,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				// Always refresh — including when editor is undefined (all tabs closed)
 				// so the toolbar switches from full navigation to "Review next file"
 				state.refreshAll();
+				log.log(`onTabSwitch: ${fname}, ${(performance.now() - tTab).toFixed(1)}ms`);
 			}),
 		);
 
@@ -234,7 +270,8 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (restored) {
 				log.log("Review state restored from persistence");
 				vscode.commands.executeCommand("setContext", "ccr.reviewActive", true);
-				await reviewManager!.openCurrentOrNext();
+				// Don't open a review file — keep the user where they were before reload.
+				// Decorations will be applied when the user switches to a review file via onTabSwitch.
 				state.refreshAll();
 			}
 		});
@@ -294,8 +331,8 @@ async function resolveCurrentHunk(accept: boolean): Promise<void> {
 		const hunk = review.hunks.find((h) => h.id === range.hunkId);
 		if (!hunk || hunk.resolved) continue;
 
-		const start = range.removedStart < range.removedEnd ? range.removedStart : range.addedStart;
-		const end = range.addedEnd > 0 ? range.addedEnd : range.removedEnd;
+		const start = range.addedStart;
+		const end = range.addedEnd;
 
 		let dist: number;
 		if (cursorLine >= start && cursorLine < end) {

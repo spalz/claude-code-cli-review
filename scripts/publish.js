@@ -117,9 +117,9 @@ function main() {
 	if (!level) {
 		console.log("Usage: node scripts/publish.js <patch|minor|major>");
 		console.log("");
-		console.log("  patch  — 8.0.0 → 8.0.1 (bug fixes)");
-		console.log("  minor  — 8.0.0 → 8.1.0 (new features)");
-		console.log("  major  — 8.0.0 → 9.0.0 (breaking changes)");
+		console.log("  patch  — 0.5.0 → 8.0.1 (bug fixes)");
+		console.log("  minor  — 0.5.0 → 8.1.0 (new features)");
+		console.log("  major  — 0.5.0 → 9.0.0 (breaking changes)");
 		process.exit(0);
 	}
 

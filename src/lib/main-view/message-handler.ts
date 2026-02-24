@@ -25,6 +25,7 @@ export interface MessageContext {
 	getKeybindings: () => KeybindingInfo[];
 	webviewReady: boolean;
 	pendingHookStatus: HookStatus | null;
+	workspaceState?: vscode.Memento;
 }
 
 export interface MessageResult {
@@ -45,10 +46,9 @@ export function handleWebviewMessage(
 
 	switch (msg.type) {
 		case "webview-ready":
-			log.log("webview ready, sending sessions list + restoring");
+			log.log("webview ready, sending sessions list");
 			webviewReady = true;
 			ctx.sessionMgr.refreshClaudeSessions();
-			ctx.sessionMgr.restoreSessions();
 			// Refresh review state in case restore() completed before webview was ready
 			state.refreshAll();
 			const termConfig = vscode.workspace.getConfiguration("claudeCodeReview");
@@ -73,7 +73,31 @@ export function handleWebviewMessage(
 				});
 				pendingHookStatus = null;
 			}
+			// Restore saved view mode (sessions list vs terminals)
+			{
+				const savedViewMode = ctx.workspaceState?.get<string>("ccr.viewMode") || "sessions";
+				log.log(`webview-ready: restoring viewMode=${savedViewMode}`);
+				ctx.postMessage({ type: "restore-view-mode", mode: savedViewMode });
+			}
 			break;
+
+		case "set-view-mode":
+			log.log(`set-view-mode: ${msg.mode as string}`);
+			ctx.workspaceState?.update("ccr.viewMode", msg.mode as string);
+			break;
+
+		case "request-restore-sessions":
+			log.log("request-restore-sessions: lazy restoring sessions");
+			ctx.sessionMgr.restoreSessions();
+			break;
+
+		case "lazy-resume": {
+			const lazyClaudeId = msg.claudeId as string;
+			const placeholderPtyId = msg.placeholderPtyId as number;
+			log.log(`lazy-resume: spawning PTY for ${lazyClaudeId.slice(0, 8)}, replacing placeholder pty=${placeholderPtyId}`);
+			ctx.sessionMgr.lazyResume(lazyClaudeId, placeholderPtyId);
+			break;
+		}
 
 		case "new-claude-session":
 			ctx.sessionMgr.startNewClaudeSession();
@@ -83,12 +107,20 @@ export function handleWebviewMessage(
 			const claudeSessionId = msg.claudeSessionId as string;
 			const existingPtyId = ctx.sessionMgr.findPtyByClaudeId(claudeSessionId);
 			if (existingPtyId !== null) {
+				// Already has a real PTY — just activate
 				log.log(
 					`resume: session ${claudeSessionId.slice(0, 8)} already open as pty #${existingPtyId}, activating`,
 				);
 				ctx.postMessage({
 					type: "activate-terminal",
 					sessionId: existingPtyId,
+				});
+			} else if (ctx.sessionMgr.isLazyPlaceholder(claudeSessionId)) {
+				// Lazy placeholder exists in webview — trigger activation
+				log.log(`resume: session ${claudeSessionId.slice(0, 8)} is lazy, activating placeholder`);
+				ctx.postMessage({
+					type: "activate-lazy-session",
+					claudeId: claudeSessionId,
 				});
 			} else {
 				log.log(`resume: opening session ${claudeSessionId.slice(0, 8)}`);
@@ -120,15 +152,14 @@ export function handleWebviewMessage(
 		case "delete-session": {
 			const sessionId = msg.sessionId as string;
 			log.log(`delete: ${sessionId.slice(0, 8)}`);
-			// Close PTY if session is open
+			// Close PTY if session is open (works for lazy sessions too)
 			const ptyId = ctx.sessionMgr.findPtyByClaudeId(sessionId);
 			if (ptyId !== null) {
 				ctx.ptyManager.closeSession(ptyId);
-				ctx.sessionMgr.getPtyToClaudeId().delete(ptyId);
-				ctx.sessionMgr.removeOpenSession(ptyId);
 				ctx.postMessage({ type: "terminal-session-closed", sessionId: ptyId });
-				ctx.sessionMgr.sendOpenSessionIds();
 			}
+			ctx.sessionMgr.removeOpenSessionByClaudeId(sessionId);
+			ctx.sessionMgr.sendOpenSessionIds();
 			deleteSession(ctx.wp, sessionId);
 			ctx.sessionMgr.refreshClaudeSessions();
 			break;
@@ -176,10 +207,14 @@ export function handleWebviewMessage(
 
 		case "close-terminal": {
 			const ptyId = msg.sessionId as number;
-			log.log(`close-terminal: pty #${ptyId}`);
+			const claudeIdForClose = msg.claudeId as string | undefined;
+			log.log(`close-terminal: pty #${ptyId}, claudeId=${claudeIdForClose || "?"}`);
 			ctx.ptyManager.closeSession(ptyId);
-			ctx.sessionMgr.getPtyToClaudeId().delete(ptyId);
-			ctx.sessionMgr.removeOpenSession(ptyId);
+			if (claudeIdForClose) {
+				ctx.sessionMgr.removeOpenSessionByClaudeId(claudeIdForClose);
+			} else {
+				ctx.sessionMgr.removeOpenSession(ptyId);
+			}
 			ctx.postMessage({
 				type: "terminal-session-closed",
 				sessionId: ptyId,
@@ -194,15 +229,15 @@ export function handleWebviewMessage(
 			const ptyId = ctx.sessionMgr.findPtyByClaudeId(claudeSessionId);
 			if (ptyId !== null) {
 				ctx.ptyManager.closeSession(ptyId);
-				ctx.sessionMgr.getPtyToClaudeId().delete(ptyId);
-				ctx.sessionMgr.removeOpenSession(ptyId);
-				ctx.postMessage({
-					type: "terminal-session-closed",
-					sessionId: ptyId,
-				});
-				ctx.sessionMgr.sendOpenSessionIds();
-				state.refreshAll();
 			}
+			// Remove from both PTY map and allOpenClaudeIds (works for lazy sessions too)
+			ctx.sessionMgr.removeOpenSessionByClaudeId(claudeSessionId);
+			ctx.postMessage({
+				type: "terminal-session-closed",
+				sessionId: ptyId ?? -1,
+			});
+			ctx.sessionMgr.sendOpenSessionIds();
+			state.refreshAll();
 			break;
 		}
 
@@ -400,8 +435,62 @@ export function handleWebviewMessage(
 			vscode.commands.executeCommand("ccr.rejectAll");
 			break;
 
+		case "open-external-url":
+			vscode.env.openExternal(vscode.Uri.parse(msg.url as string));
+			break;
+
+		case "open-file-link": {
+			let filePath = msg.path as string;
+			// Expand ~ to home directory
+			if (filePath.startsWith("~/")) {
+				filePath = path.join(os.homedir(), filePath.slice(2));
+			}
+			log.log(`open-file-link: path="${filePath}", line=${msg.line}, col=${msg.column}`);
+			const candidates: string[] = [];
+
+			if (path.isAbsolute(filePath)) {
+				candidates.push(filePath);
+			} else {
+				candidates.push(path.join(ctx.wp, filePath));
+				for (const folder of vscode.workspace.workspaceFolders || []) {
+					const candidate = path.join(folder.uri.fsPath, filePath);
+					if (!candidates.includes(candidate)) candidates.push(candidate);
+				}
+			}
+
+			log.log(`open-file-link: candidates=${JSON.stringify(candidates)}`);
+			(async () => {
+				for (const absPath of candidates) {
+					try {
+						await vscode.workspace.fs.stat(vscode.Uri.file(absPath));
+						log.log(`open-file-link: found ${absPath}`);
+						const doc = await vscode.workspace.openTextDocument(absPath);
+						const editor = await vscode.window.showTextDocument(doc);
+						if (msg.line) {
+							const pos = new vscode.Position(
+								(msg.line as number) - 1,
+								((msg.column as number) || 1) - 1,
+							);
+							editor.selection = new vscode.Selection(pos, pos);
+							editor.revealRange(
+								new vscode.Range(pos, pos),
+								vscode.TextEditorRevealType.InCenter,
+							);
+						}
+						return;
+					} catch (err) {
+						log.log(`open-file-link: miss ${absPath}: ${(err as Error).message}`);
+					}
+				}
+				log.log(`open-file-link: no candidates matched for "${filePath}"`);
+			})();
+			break;
+		}
+
 		case "diag-log":
-			// Silently consumed — webview diagnostics stay in browser console
+			if ((msg.category as string) === "links") {
+				log.log(`[webview:links] ${msg.message as string}: ${JSON.stringify(msg.data)}`);
+			}
 			break;
 	}
 

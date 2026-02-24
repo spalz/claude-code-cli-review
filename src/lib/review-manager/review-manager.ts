@@ -25,7 +25,40 @@ export class ReviewManager implements vscode.Disposable {
 	readonly _onReviewStateChange = new vscode.EventEmitter<boolean>();
 	readonly onReviewStateChange = this._onReviewStateChange.event;
 
+	/** Serializes operations that modify editor content (resolve, undo, redo) */
+	private _opQueue: Promise<void> = Promise.resolve();
+
+	/** When true, onDidChangeActiveTextEditor should skip state updates to prevent flicker */
+	private _suppressTabSwitch = false;
+
 	constructor(readonly wp: string) {}
+
+	/** Run an async operation serially — prevents overlapping editor.edit() calls */
+	private serialized(fn: () => Promise<void>): Promise<void> {
+		const tEnqueue = performance.now();
+		const prev = this._opQueue;
+		const next = prev.then(async () => {
+			const waited = performance.now() - tEnqueue;
+			if (waited > 5) log.log(`serialized: waited ${waited.toFixed(1)}ms in queue`);
+			await fn();
+		}, async () => {
+			const waited = performance.now() - tEnqueue;
+			if (waited > 5) log.log(`serialized: waited ${waited.toFixed(1)}ms in queue (prev failed)`);
+			await fn();
+		});
+		this._opQueue = next.then(() => {}, () => {});
+		return next;
+	}
+
+	/** Check if tab switch events should be suppressed */
+	get isTransitioning(): boolean { return this._suppressTabSwitch; }
+
+	/** Run fn while suppressing onDidChangeActiveTextEditor processing */
+	async withSuppressedTabSwitch<T>(fn: () => Promise<T>): Promise<T> {
+		this._suppressTabSwitch = true;
+		try { return await fn(); }
+		finally { this._suppressTabSwitch = false; }
+	}
 
 	// --- Internal interface cast ---
 	private get internal(): ReviewManagerInternal { return this; }
@@ -54,24 +87,24 @@ export class ReviewManager implements vscode.Disposable {
 		}
 	}
 
-	// --- Resolve hunks ---
+	// --- Resolve hunks (serialized to prevent overlapping editor.edit calls) ---
 	async resolveHunk(filePath: string, hunkId: number, accept: boolean): Promise<void> {
-		await resolveHunkImpl(this.internal, filePath, hunkId, accept);
+		await this.serialized(() => this.withSuppressedTabSwitch(() => resolveHunkImpl(this.internal, filePath, hunkId, accept)));
 	}
 	async resolveAllHunks(filePath: string, accept: boolean): Promise<void> {
-		await resolveAllHunksImpl(this.internal, filePath, accept);
+		await this.serialized(() => this.withSuppressedTabSwitch(() => resolveAllHunksImpl(this.internal, filePath, accept)));
 	}
 
 	// --- Navigation ---
 	navigateHunk(delta: number): void { navigateHunkImpl(this.internal, delta); }
-	async navigateFile(delta: number): Promise<void> { await navigateFileImpl(this.internal, delta); }
-	async reviewNextUnresolved(): Promise<void> { await reviewNextUnresolvedImpl(this.internal); }
-	async openCurrentOrNext(): Promise<void> { await openCurrentOrNextImpl(this.internal); }
-	async openFileForReview(filePath: string): Promise<void> { await openFileForReviewImpl(this.internal, filePath); }
+	async navigateFile(delta: number): Promise<void> { await this.withSuppressedTabSwitch(() => navigateFileImpl(this.internal, delta)); }
+	async reviewNextUnresolved(): Promise<void> { await this.withSuppressedTabSwitch(() => reviewNextUnresolvedImpl(this.internal)); }
+	async openCurrentOrNext(): Promise<void> { await this.withSuppressedTabSwitch(() => openCurrentOrNextImpl(this.internal)); }
+	async openFileForReview(filePath: string): Promise<void> { await this.withSuppressedTabSwitch(() => openFileForReviewImpl(this.internal, filePath)); }
 
-	// --- Undo/Redo ---
-	async undoResolve(): Promise<void> { await undoResolveImpl(this.internal); }
-	async redoResolve(): Promise<void> { await redoResolveImpl(this.internal); }
+	// --- Undo/Redo (serialized to prevent overlapping editor.edit calls) ---
+	async undoResolve(): Promise<void> { await this.serialized(() => this.withSuppressedTabSwitch(() => undoResolveImpl(this.internal))); }
+	async redoResolve(): Promise<void> { await this.serialized(() => this.withSuppressedTabSwitch(() => redoResolveImpl(this.internal))); }
 	restoreFromSnapshot(fsPath: string, snapshot: ReviewSnapshot): void {
 		restoreFromSnapshotImpl(this.internal, fsPath, snapshot);
 	}
@@ -110,9 +143,12 @@ export class ReviewManager implements vscode.Disposable {
 	}
 
 	refreshUI(): void {
+		const t0 = performance.now();
 		this.codeLens?.refresh();
 		this.mainView?.update();
-		state.refreshReview();
+		// NOTE: state.refreshReview() intentionally NOT called here — it would
+		// trigger codeLens.refresh() + mainView.update() a second time via baseRefresh().
+		log.log(`ReviewManager.refreshUI: ${(performance.now() - t0).toFixed(1)}ms`);
 	}
 
 	// --- Disposal ---

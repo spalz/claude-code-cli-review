@@ -78,7 +78,7 @@ describe("ReviewCodeLensProvider", () => {
 		expect(lenses[1].command?.arguments).toEqual(["/test/file.ts", 0]);
 	});
 
-	it("places lenses on removedStart when removedStart < removedEnd", () => {
+	it("always places lenses on addedStart regardless of removedStart", () => {
 		const review = makeFakeReview({
 			hunkRanges: [makeHunkRange({ hunkId: 0, removedStart: 5, removedEnd: 8, addedStart: 10, addedEnd: 12 })],
 		});
@@ -87,7 +87,7 @@ describe("ReviewCodeLensProvider", () => {
 		const doc = makeDocument("/test/file.ts");
 		const lenses = provider.provideCodeLenses(doc);
 
-		expect(lenses[0].range.start.line).toBe(5);
+		expect(lenses[0].range.start.line).toBe(10);
 	});
 
 	it("places lenses on addedStart when removedStart equals removedEnd", () => {
@@ -102,7 +102,7 @@ describe("ReviewCodeLensProvider", () => {
 		expect(lenses[0].range.start.line).toBe(4);
 	});
 
-	it("shows hunk counter when multiple unresolved hunks exist", () => {
+	it("shows Keep + Undo per hunk without counter (gutter indicators instead)", () => {
 		const hunks = [
 			makeHunk({ id: 0, resolved: false }),
 			makeHunk({ id: 1, resolved: false }),
@@ -117,15 +117,12 @@ describe("ReviewCodeLensProvider", () => {
 		const doc = makeDocument("/test/file.ts");
 		const lenses = provider.provideCodeLenses(doc);
 
-		// Each hunk: Keep + Undo + counter = 3 lenses per hunk, total 6
-		expect(lenses).toHaveLength(6);
-		// First hunk counter
-		expect(lenses[2].command?.title).toBe("1/2");
-		expect(lenses[2].command?.tooltip).toBe("Change 1 of 2");
-		expect(lenses[2].command?.command).toBe("");
-		// Second hunk counter
-		expect(lenses[5].command?.title).toBe("2/2");
-		expect(lenses[5].command?.tooltip).toBe("Change 2 of 2");
+		// Each hunk: Keep + Undo = 2 lenses per hunk, total 4 (no counter)
+		expect(lenses).toHaveLength(4);
+		expect(lenses[0].command?.title).toContain("Keep");
+		expect(lenses[1].command?.title).toContain("Undo");
+		expect(lenses[2].command?.title).toContain("Keep");
+		expect(lenses[3].command?.title).toContain("Undo");
 	});
 
 	it("does not show hunk counter for single unresolved hunk", () => {

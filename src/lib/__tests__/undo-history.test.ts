@@ -15,6 +15,8 @@ import {
 	isApplyingEdit,
 	clearHistory,
 	clearAllHistories,
+	getLastUndoFilePath,
+	getLastRedoFilePath,
 } from "../undo-history";
 import type { IFileReview, ChangeType } from "../../types";
 
@@ -206,6 +208,96 @@ describe("undo-history (stack-based)", () => {
 	it("pushRedoState without initHistory is a no-op", () => {
 		pushRedoState("/ws/file.ts", makeFakeReview());
 		expect(hasRedoState("/ws/file.ts")).toBe(false);
+	});
+
+	it("enforces MAX_UNDO_DEPTH=50 limit by evicting oldest", () => {
+		initHistory("/ws/file.ts");
+		for (let i = 0; i < 55; i++) {
+			pushUndoState("/ws/file.ts", makeFakeReview({ mergedLines: [`state${i}`] }));
+		}
+		// Pop all — should get exactly 50 (not 55)
+		let count = 0;
+		while (popUndoState("/ws/file.ts")) count++;
+		expect(count).toBe(50);
+	});
+
+	it("enforces MAX_UNDO_DEPTH on redo stack too", () => {
+		initHistory("/ws/file.ts");
+		for (let i = 0; i < 55; i++) {
+			pushRedoState("/ws/file.ts", makeFakeReview({ mergedLines: [`redo${i}`] }));
+		}
+		let count = 0;
+		while (popRedoState("/ws/file.ts")) count++;
+		expect(count).toBe(50);
+	});
+
+	it("evicted entries are oldest (FIFO eviction)", () => {
+		initHistory("/ws/file.ts");
+		for (let i = 0; i < 55; i++) {
+			pushUndoState("/ws/file.ts", makeFakeReview({ mergedLines: [`s${i}`] }));
+		}
+		// Last popped should be state5 (0-4 evicted)
+		const snapshots: string[][] = [];
+		let snap;
+		while ((snap = popUndoState("/ws/file.ts"))) snapshots.push(snap.mergedLines);
+		// snapshots[0] is most recent (s54), last is oldest remaining (s5)
+		expect(snapshots[0]).toEqual(["s54"]);
+		expect(snapshots[snapshots.length - 1]).toEqual(["s5"]);
+	});
+});
+
+describe("cross-file global tracking", () => {
+	it("getLastUndoFilePath returns most recent file", () => {
+
+		initHistory("/ws/a.ts");
+		initHistory("/ws/b.ts");
+		pushUndoState("/ws/a.ts", makeFakeReview({ filePath: "/ws/a.ts" }));
+		pushUndoState("/ws/b.ts", makeFakeReview({ filePath: "/ws/b.ts" }));
+		expect(getLastUndoFilePath()).toBe("/ws/b.ts");
+	});
+
+	it("getLastUndoFilePath returns undefined when empty", () => {
+
+		expect(getLastUndoFilePath()).toBeUndefined();
+	});
+
+	it("getLastRedoFilePath returns most recent file", () => {
+
+		initHistory("/ws/a.ts");
+		initHistory("/ws/b.ts");
+		pushRedoState("/ws/a.ts", makeFakeReview({ filePath: "/ws/a.ts" }));
+		pushRedoState("/ws/b.ts", makeFakeReview({ filePath: "/ws/b.ts" }));
+		expect(getLastRedoFilePath()).toBe("/ws/b.ts");
+	});
+
+	it("popUndoState removes file from global order", () => {
+
+		initHistory("/ws/a.ts");
+		initHistory("/ws/b.ts");
+		pushUndoState("/ws/a.ts", makeFakeReview({ filePath: "/ws/a.ts" }));
+		pushUndoState("/ws/b.ts", makeFakeReview({ filePath: "/ws/b.ts" }));
+		popUndoState("/ws/b.ts");
+		expect(getLastUndoFilePath()).toBe("/ws/a.ts");
+	});
+
+	it("clearHistory removes file from global stacks", () => {
+
+		initHistory("/ws/a.ts");
+		pushUndoState("/ws/a.ts", makeFakeReview({ filePath: "/ws/a.ts" }));
+		pushRedoState("/ws/a.ts", makeFakeReview({ filePath: "/ws/a.ts" }));
+		clearHistory("/ws/a.ts");
+		expect(getLastUndoFilePath()).toBeUndefined();
+		expect(getLastRedoFilePath()).toBeUndefined();
+	});
+
+	it("clearAllHistories clears global stacks", () => {
+
+		initHistory("/ws/a.ts");
+		pushUndoState("/ws/a.ts", makeFakeReview());
+		pushRedoState("/ws/a.ts", makeFakeReview());
+		clearAllHistories();
+		expect(getLastUndoFilePath()).toBeUndefined();
+		expect(getLastRedoFilePath()).toBeUndefined();
 	});
 });
 

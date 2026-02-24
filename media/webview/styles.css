@@ -350,6 +350,9 @@ body {
 .session-item .dot.active {
 	background: #4caf50;
 }
+.session-item .dot.lazy {
+	background: #e8a317;
+}
 .session-item .dot.past {
 	background: rgba(128, 128, 128, 0.3);
 }
@@ -548,6 +551,22 @@ body {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	display: block;
+}
+.terminal-tab .tab-close {
+	visibility: hidden;
+	font-size: 14px;
+	line-height: 1;
+	opacity: 0.6;
+	cursor: pointer;
+	flex-shrink: 0;
+	padding: 0 2px;
+}
+.terminal-tab .tab-close:hover {
+	opacity: 1;
+}
+.terminal-tab:hover .tab-close,
+.terminal-tab.active .tab-close {
+	visibility: visible;
 }
 
 /* Terminal area */

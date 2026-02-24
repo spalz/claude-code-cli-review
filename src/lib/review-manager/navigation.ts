@@ -18,7 +18,7 @@ export function navigateHunk(mgr: ReviewManagerInternal, delta: number): void {
 
 	mgr.currentHunkIndex = (mgr.currentHunkIndex + delta + ranges.length) % ranges.length;
 	const range = ranges[mgr.currentHunkIndex];
-	const line = range.removedStart < range.removedEnd ? range.removedStart : range.addedStart;
+	const line = range.addedStart;
 	editor.revealRange(
 		new vscode.Range(line, 0, line, 0),
 		vscode.TextEditorRevealType.InCenter,
@@ -109,10 +109,7 @@ export async function openFileForReview(mgr: ReviewManagerInternal, filePath: st
 
 	const firstRange = review.hunkRanges[0];
 	if (firstRange) {
-		const line =
-			firstRange.removedStart < firstRange.removedEnd
-				? firstRange.removedStart
-				: firstRange.addedStart;
+		const line = firstRange.addedStart;
 		editor.revealRange(
 			new vscode.Range(line, 0, line, 0),
 			vscode.TextEditorRevealType.InCenterIfOutsideViewport,

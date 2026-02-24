@@ -57,10 +57,16 @@ export function buildMergedContent(modifiedLines: string[], hunks: Hunk[]): Merg
 			const lines = hunk.accepted ? hunk.added : hunk.removed;
 			for (const line of lines) result.push(line);
 		} else {
+			// Hover-based approach: only added lines go into the buffer.
+			// Removed lines are shown via hover decorations, keeping the buffer clean.
+			// Exception: pure-delete hunks (added=[], removed=[...]) — show removed
+			// lines in buffer so the user can see what's being deleted.
+			const isPureDeletion = hunk.added.length === 0 && hunk.removed.length > 0;
 			const removedStart = result.length;
-			for (const line of hunk.removed) result.push(line);
+			if (isPureDeletion) {
+				for (const line of hunk.removed) result.push(line);
+			}
 			const removedEnd = result.length;
-
 			const addedStart = result.length;
 			for (const line of hunk.added) result.push(line);
 			const addedEnd = result.length;

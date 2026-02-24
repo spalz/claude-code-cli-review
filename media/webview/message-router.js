@@ -20,7 +20,7 @@
 				break;
 
 			case "open-sessions-update":
-				updateOpenClaudeIds(msg.openClaudeIds);
+				updateOpenClaudeIds(msg.openClaudeIds, msg.lazyClaudeIds);
 				renderSessions(null);
 				break;
 
@@ -32,7 +32,12 @@
 				var terminals = getTerminals();
 				if (terminals.has(msg.sessionId)) {
 					activateTerminal(msg.sessionId);
-					showTerminalView();
+					if (window.viewMode !== "terminals") {
+						showTerminalView();
+					}
+					[100, 300, 800].forEach(function (ms) {
+						setTimeout(fitActiveTerminal, ms);
+					});
 				}
 				break;
 			}
@@ -44,7 +49,7 @@
 					loaderVisible: !!loader
 				});
 				if (loader) loader.remove();
-				addTerminal(msg.sessionId, msg.name, msg.claudeId);
+				addTerminal(msg.sessionId, msg.name, msg.claudeId, msg.restoring, msg.lazy);
 				break;
 			}
 
@@ -88,7 +93,7 @@
 						if (/\x1b\[\??(25|1049|2004)|(\x1b\[H\x1b\[2J)/.test(msg.data)) {
 							t.loadingOverlay.remove();
 							t.loadingOverlay = null;
-							t.term.write(msg.data);
+							t.term.write(window.annotateFileLinks(msg.data));
 						} else {
 							// Pre-TUI text — show in skeleton status, don't write to terminal
 							var plain = msg.data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/[\x00-\x1f]/g, " ").trim();
@@ -102,7 +107,7 @@
 					var before = getTermBufferState(t);
 					var buf = t.term.buffer.active;
 					var wasAtBottom = buf.viewportY >= buf.baseY;
-					t.term.write(msg.data);
+					t.term.write(window.annotateFileLinks(msg.data));
 					if (wasAtBottom) {
 						t.term.scrollToBottom();
 					}
@@ -139,7 +144,7 @@
 					closeBtn.className = "btn";
 					closeBtn.textContent = "Close";
 					closeBtn.onclick = function () {
-						send("close-terminal", { sessionId: msg.sessionId });
+						send("close-terminal", { sessionId: msg.sessionId, claudeId: te.claudeId || null });
 					};
 					bar.appendChild(closeBtn);
 					te.container.appendChild(bar);
@@ -225,6 +230,55 @@
 					}
 					setCurrentFilePath(activeFile);
 					renderReviewToolbar(msg.review);
+				}
+				break;
+
+			case "lazy-session-ready": {
+				// Replace placeholder terminal entry with real PTY
+				var placeholder = getTerminals().get(msg.placeholderPtyId);
+				if (placeholder) {
+					var terms = getTerminals();
+					terms.delete(msg.placeholderPtyId);
+					placeholder.id = msg.realPtyId;
+					placeholder.lazy = false;
+					placeholder.sessionRef.id = msg.realPtyId;
+					terms.set(msg.realPtyId, placeholder);
+					placeholder.tabEl.dataset.tid = msg.realPtyId;
+					placeholder.tabEl.classList.remove("lazy");
+					// Update active ID if this was active
+					if (getActiveTerminalId() === msg.placeholderPtyId) {
+						// Re-activate with real ID
+						activateTerminal(msg.realPtyId);
+					}
+					diagLog("terminal", "lazy-ready", {
+						placeholder: msg.placeholderPtyId, real: msg.realPtyId, claudeId: msg.claudeId
+					});
+				}
+				break;
+			}
+
+			case "activate-lazy-session": {
+				// Find the lazy placeholder tab by claudeId and activate it
+				var found = false;
+				getTerminals().forEach(function (t, tid) {
+					if (t.claudeId === msg.claudeId) {
+						activateTerminal(tid);
+						showTerminalView();
+						found = true;
+					}
+				});
+				if (!found) {
+					diagLog("session", "activate-lazy-session-miss", { claudeId: msg.claudeId });
+				}
+				break;
+			}
+
+			case "restore-view-mode":
+				if (msg.mode === "terminals") {
+					switchMode("terminals", true);
+					// Lazy-load: request session restore only when switching to terminals
+					window._sessionsRestored = true;
+					send("request-restore-sessions");
 				}
 				break;
 

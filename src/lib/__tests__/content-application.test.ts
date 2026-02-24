@@ -199,7 +199,7 @@ describe("applyTargetedHunkEdit — buffer validation", () => {
 		expect(mockEditor.edit).toHaveBeenCalled();
 	});
 
-	it("uses targeted edit when buffer matches pre-merge content", async () => {
+	it("accept skips buffer edit when buffer matches (hover-based approach)", async () => {
 		const mgr = setupManager();
 		const filePath = setupMultiHunkFile(mgr);
 		const review = state.activeReviews.get(filePath)!;
@@ -224,11 +224,13 @@ describe("applyTargetedHunkEdit — buffer validation", () => {
 		(vscode.window as any).visibleTextEditors = [mockEditor];
 		(vscode.window as any).activeTextEditor = mockEditor;
 
-		// Resolve first hunk — buffer matches, should attempt targeted edit
+		// Resolve first hunk (accept) — hover-based: added lines already in buffer, no edit needed
 		await mgr.resolveHunk(filePath, review.hunks[0].id, true);
 
-		// editor.edit should be called (targeted edit)
-		expect(mockEditor.edit).toHaveBeenCalled();
+		// editor.edit should NOT be called — accept just updates decorations
+		expect(mockEditor.edit).not.toHaveBeenCalled();
+		// applyDecorations should be called instead
+		expect(mockDecorations.applyDecorations).toHaveBeenCalled();
 	});
 });
 

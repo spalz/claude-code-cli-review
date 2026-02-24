@@ -34,6 +34,8 @@ export class Selection extends Range {
 export class Uri {
 	constructor(public fsPath: string) {}
 	static file(p: string) { return new Uri(p); }
+	static parse(s: string) { return new Uri(s); }
+	static joinPath(base: Uri, ...segments: string[]) { return new Uri([base.fsPath, ...segments].join("/")); }
 	toString() { return this.fsPath; }
 }
 
@@ -55,6 +57,7 @@ export const window = {
 	showInformationMessage: vi.fn(),
 	showWarningMessage: vi.fn(),
 	showErrorMessage: vi.fn(),
+	setStatusBarMessage: vi.fn(),
 	showTextDocument: vi.fn().mockResolvedValue({
 		revealRange: vi.fn(),
 		selection: null,
@@ -84,6 +87,14 @@ export class CodeLens {
 	}
 }
 
+export class MarkdownString {
+	value = "";
+	isTrusted = false;
+	supportHtml = false;
+	appendMarkdown(value: string) { this.value += value; return this; }
+	appendText(value: string) { this.value += value; return this; }
+}
+
 export class ThemeColor {
 	id: string;
 	constructor(id: string) { this.id = id; }
@@ -96,7 +107,15 @@ export enum OverviewRulerLane {
 	Full = 7,
 }
 
+export const env = {
+	openExternal: vi.fn().mockResolvedValue(true),
+};
+
 export const workspace = {
+	workspaceFolders: [{ uri: new Uri("/ws") }] as { uri: Uri }[],
+	fs: {
+		stat: vi.fn().mockResolvedValue({ type: 1, size: 100 }),
+	},
 	openTextDocument: vi.fn().mockResolvedValue({ uri: { fsPath: "" } }),
 	onDidChangeTextDocument: vi.fn().mockReturnValue({ dispose: vi.fn() }),
 	onDidCloseTextDocument: vi.fn().mockReturnValue({ dispose: vi.fn() }),

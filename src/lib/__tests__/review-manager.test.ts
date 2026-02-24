@@ -20,6 +20,8 @@ const mockUndoHistory = vi.hoisted(() => ({
 	clearHistory: vi.fn(),
 	clearAllHistories: vi.fn(),
 	lookupSnapshot: vi.fn().mockReturnValue(undefined),
+	getLastUndoFilePath: vi.fn().mockReturnValue(undefined),
+	getLastRedoFilePath: vi.fn().mockReturnValue(undefined),
 }));
 vi.mock("../undo-history", () => mockUndoHistory);
 
@@ -407,7 +409,7 @@ describe("persistence", () => {
 		mockFs.existsSync.mockReturnValue(false);
 		await mgr.restore();
 		const review = state.activeReviews.get("/ws/deleted.ts");
-		// mergedLines should contain removed lines only (no trailing empty string)
+		// New behavior: removed lines ARE in buffer for unresolved pure-delete hunks
 		expect(review?.mergedLines).toEqual(["a", "b"]);
 		expect(review?.hunkRanges).toHaveLength(1);
 		expect(review?.hunkRanges[0].removedStart).toBe(0);
@@ -434,7 +436,7 @@ describe("persistence", () => {
 		await mgr.restore();
 		const review = state.activeReviews.get("/ws/edit.ts");
 		expect(review).toBeDefined();
-		expect(review?.mergedLines).toEqual(["old", "new"]);
+		expect(review?.mergedLines).toEqual(["new"]);
 		expect(review?.hunkRanges).toHaveLength(1);
 	});
 
@@ -740,6 +742,17 @@ describe("undoResolve / redoResolve", () => {
 		(vscode.window as any).visibleTextEditors = [];
 	}
 
+	beforeEach(() => {
+		mockUndoHistory.hasUndoState.mockReset().mockReturnValue(false);
+		mockUndoHistory.hasRedoState.mockReset().mockReturnValue(false);
+		mockUndoHistory.popUndoState.mockReset();
+		mockUndoHistory.popRedoState.mockReset();
+		mockUndoHistory.pushUndoState.mockReset();
+		mockUndoHistory.pushRedoState.mockReset();
+		mockUndoHistory.getLastUndoFilePath.mockReset().mockReturnValue(undefined);
+		mockUndoHistory.getLastRedoFilePath.mockReset().mockReturnValue(undefined);
+	});
+
 	afterEach(() => {
 		clearActiveEditor();
 	});
@@ -757,6 +770,7 @@ describe("undoResolve / redoResolve", () => {
 		review.hunks[0].accepted = true;
 
 		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.hasUndoState.mockReturnValueOnce(true).mockReturnValueOnce(true);
 		mockUndoHistory.popUndoState.mockReturnValueOnce(snapshot);
 
 		await mgr.undoResolve();
@@ -776,6 +790,7 @@ describe("undoResolve / redoResolve", () => {
 		review.hunks[0].accepted = true;
 
 		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.hasUndoState.mockReturnValueOnce(true).mockReturnValueOnce(true);
 		mockUndoHistory.popUndoState.mockReturnValueOnce(snapshot);
 
 		// Capture the state at call time since restoreFromSnapshot mutates the review
@@ -804,6 +819,9 @@ describe("undoResolve / redoResolve", () => {
 		expect(state.activeReviews.has("/ws/file.ts")).toBe(false);
 
 		setActiveEditor("/ws/file.ts");
+		// After finalize, file is not in activeReviews — cross-file undo uses getLastUndoFilePath
+		mockUndoHistory.hasUndoState.mockReturnValueOnce(false).mockReturnValueOnce(true);
+		mockUndoHistory.getLastUndoFilePath.mockReturnValueOnce("/ws/file.ts");
 		mockUndoHistory.popUndoState.mockReturnValueOnce(snapshot);
 
 		await mgr.undoResolve();
@@ -824,6 +842,9 @@ describe("undoResolve / redoResolve", () => {
 		expect(state.activeReviews.has("/ws/file.ts")).toBe(false);
 
 		setActiveEditor("/ws/file.ts");
+		// After finalize, file is not in activeReviews — cross-file undo uses getLastUndoFilePath
+		mockUndoHistory.hasUndoState.mockReturnValueOnce(false).mockReturnValueOnce(true);
+		mockUndoHistory.getLastUndoFilePath.mockReturnValueOnce("/ws/file.ts");
 		mockUndoHistory.popUndoState.mockReturnValueOnce(snapshot);
 		mockUndoHistory.pushRedoState.mockClear();
 
@@ -879,6 +900,7 @@ describe("undoResolve / redoResolve", () => {
 		});
 
 		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.hasRedoState.mockReturnValueOnce(true).mockReturnValueOnce(true);
 		mockUndoHistory.popRedoState.mockReturnValueOnce(redoSnapshot);
 
 		await mgr.redoResolve();
@@ -904,6 +926,7 @@ describe("undoResolve / redoResolve", () => {
 		});
 
 		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.hasRedoState.mockReturnValueOnce(true).mockReturnValueOnce(true);
 		mockUndoHistory.popRedoState.mockReturnValueOnce(redoSnapshot);
 
 		// Capture at call time since restoreFromSnapshot mutates the review
@@ -934,6 +957,7 @@ describe("undoResolve / redoResolve", () => {
 		});
 
 		setActiveEditor("/ws/file.ts");
+		mockUndoHistory.hasRedoState.mockReturnValueOnce(true).mockReturnValueOnce(true);
 		mockUndoHistory.popRedoState.mockReturnValueOnce(finalizedSnapshot);
 
 		await mgr.redoResolve();
@@ -976,16 +1000,19 @@ describe("undoResolve / redoResolve", () => {
 		];
 
 		// Redo 1
+		mockUndoHistory.hasRedoState.mockReturnValueOnce(true).mockReturnValueOnce(true);
 		mockUndoHistory.popRedoState.mockReturnValueOnce(snapshots[0]);
 		await mgr.redoResolve();
 		expect(pushUndoCalls[0].preserveRedo).toBe(true);
 
 		// Redo 2
+		mockUndoHistory.hasRedoState.mockReturnValueOnce(true).mockReturnValueOnce(true);
 		mockUndoHistory.popRedoState.mockReturnValueOnce(snapshots[1]);
 		await mgr.redoResolve();
 		expect(pushUndoCalls[1].preserveRedo).toBe(true);
 
 		// Redo 3
+		mockUndoHistory.hasRedoState.mockReturnValueOnce(true).mockReturnValueOnce(true);
 		mockUndoHistory.popRedoState.mockReturnValueOnce(snapshots[2]);
 		await mgr.redoResolve();
 		expect(pushUndoCalls[2].preserveRedo).toBe(true);
@@ -1011,6 +1038,9 @@ describe("undoResolve / redoResolve", () => {
 		expect(state.activeReviews.has("/ws/file.ts")).toBe(false);
 
 		// Step 2: undo → restores pre-resolve state
+		// After finalize, file is not in activeReviews — cross-file undo uses getLastUndoFilePath
+		mockUndoHistory.hasUndoState.mockReturnValueOnce(false).mockReturnValueOnce(true);
+		mockUndoHistory.getLastUndoFilePath.mockReturnValueOnce("/ws/file.ts");
 		mockUndoHistory.popUndoState.mockReturnValueOnce(preResolveSnapshot);
 		await mgr.undoResolve();
 
@@ -1023,6 +1053,7 @@ describe("undoResolve / redoResolve", () => {
 		const finalizedSnapshot = makeSnapshot(afterUndo, {
 			hunks: afterUndo.hunks.map(h => ({ ...h, resolved: true, accepted: true })),
 		});
+		mockUndoHistory.hasRedoState.mockReturnValueOnce(true).mockReturnValueOnce(true);
 		mockUndoHistory.popRedoState.mockReturnValueOnce(finalizedSnapshot);
 
 		await mgr.redoResolve();

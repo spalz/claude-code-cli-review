@@ -30,7 +30,7 @@ vi.mock("../actions", () => mockActions);
 import { handleWebviewMessage } from "../main-view/message-handler";
 import type { MessageContext } from "../main-view/message-handler";
 import type { ExtensionToWebviewMessage, HookStatus } from "../../types";
-import { window as mockVscodeWindow } from "./mocks/vscode";
+import { window as mockVscodeWindow, env as mockVscodeEnv, workspace as mockVscodeWorkspace } from "./mocks/vscode";
 
 function createMockContext(overrides?: Partial<MessageContext>): MessageContext {
 	return {
@@ -41,6 +41,8 @@ function createMockContext(overrides?: Partial<MessageContext>): MessageContext 
 			findPtyByClaudeId: vi.fn().mockReturnValue(null),
 			getPtyToClaudeId: vi.fn().mockReturnValue(new Map()),
 			removeOpenSession: vi.fn(),
+			removeOpenSessionByClaudeId: vi.fn(),
+			isLazyPlaceholder: vi.fn().mockReturnValue(false),
 			sendOpenSessionIds: vi.fn(),
 			persistActiveSession: vi.fn(),
 		} as unknown as MessageContext["sessionMgr"],
@@ -130,7 +132,7 @@ describe("delete-session", () => {
 		handleWebviewMessage({ type: "delete-session", sessionId: "sess-del" }, ctx);
 
 		expect(ctx.ptyManager.closeSession).toHaveBeenCalledWith(42);
-		expect(ctx.sessionMgr.removeOpenSession).toHaveBeenCalledWith(42);
+		expect(ctx.sessionMgr.removeOpenSessionByClaudeId).toHaveBeenCalledWith("sess-del");
 	});
 
 	it("sends terminal-session-closed when PTY is closed", () => {
@@ -219,11 +221,13 @@ describe("webview-ready", () => {
 		expect(result.webviewReady).toBe(true);
 	});
 
-	it("calls refreshClaudeSessions and restoreSessions", () => {
+	it("calls refreshClaudeSessions (restoreSessions is lazy via request-restore-sessions)", () => {
 		const ctx = createMockContext({ webviewReady: false });
 		handleWebviewMessage({ type: "webview-ready" }, ctx);
 		expect(ctx.sessionMgr.refreshClaudeSessions).toHaveBeenCalled();
-		expect(ctx.sessionMgr.restoreSessions).toHaveBeenCalled();
+		// restoreSessions is NOT called on webview-ready — it's triggered lazily
+		// via "request-restore-sessions" when webview switches to terminals view
+		expect(ctx.sessionMgr.restoreSessions).not.toHaveBeenCalled();
 	});
 
 	it("sends pending hook status if present", () => {
@@ -257,6 +261,114 @@ describe("blocked-slash-command", () => {
 		expect(mockVscodeWindow.showWarningMessage).toHaveBeenCalledWith(
 			"/resume is disabled in embedded sessions. Use UI controls instead.",
 		);
+	});
+});
+
+// ─── open-external-url ──────────────────────────────────────────────
+
+describe("open-external-url", () => {
+	it("calls vscode.env.openExternal with parsed URI", () => {
+		const ctx = createMockContext();
+		handleWebviewMessage({ type: "open-external-url", url: "https://example.com" }, ctx);
+		expect(mockVscodeEnv.openExternal).toHaveBeenCalled();
+		const arg = (mockVscodeEnv.openExternal as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		expect(arg.fsPath).toBe("https://example.com");
+	});
+});
+
+// ─── open-file-link ─────────────────────────────────────────────────
+
+describe("open-file-link", () => {
+	it("opens absolute file path", async () => {
+		const ctx = createMockContext();
+		const mockEditor = { selection: null, revealRange: vi.fn() };
+		mockVscodeWindow.showTextDocument.mockResolvedValue(mockEditor);
+		mockVscodeWorkspace.fs.stat.mockResolvedValue({ type: 1 });
+
+		handleWebviewMessage(
+			{ type: "open-file-link", path: "/abs/file.ts", line: 10, column: 5 },
+			ctx,
+		);
+
+		// Allow async handler to run
+		await new Promise(r => setTimeout(r, 10));
+
+		expect(mockVscodeWorkspace.fs.stat).toHaveBeenCalled();
+		expect(mockVscodeWorkspace.openTextDocument).toHaveBeenCalledWith("/abs/file.ts");
+		expect(mockVscodeWindow.showTextDocument).toHaveBeenCalled();
+	});
+
+	it("resolves relative path from workspace root", async () => {
+		const ctx = createMockContext({ wp: "/projects/myapp" });
+		const mockEditor = { selection: null, revealRange: vi.fn() };
+		mockVscodeWindow.showTextDocument.mockResolvedValue(mockEditor);
+		mockVscodeWorkspace.fs.stat.mockResolvedValue({ type: 1 });
+
+		handleWebviewMessage(
+			{ type: "open-file-link", path: "./src/index.ts" },
+			ctx,
+		);
+
+		await new Promise(r => setTimeout(r, 10));
+
+		expect(mockVscodeWorkspace.openTextDocument).toHaveBeenCalledWith(
+			"/projects/myapp/src/index.ts",
+		);
+	});
+
+	it("sets cursor position when line is provided", async () => {
+		const ctx = createMockContext();
+		const mockEditor = { selection: null, revealRange: vi.fn() };
+		mockVscodeWindow.showTextDocument.mockResolvedValue(mockEditor);
+		mockVscodeWorkspace.fs.stat.mockResolvedValue({ type: 1 });
+
+		handleWebviewMessage(
+			{ type: "open-file-link", path: "/abs/file.ts", line: 42 },
+			ctx,
+		);
+
+		await new Promise(r => setTimeout(r, 10));
+
+		expect(mockEditor.revealRange).toHaveBeenCalled();
+		// line 42 → Position(41, 0) (0-indexed, default column=1→0)
+		expect(mockEditor.selection).toBeTruthy();
+	});
+
+	it("silently does nothing when file not found", async () => {
+		const ctx = createMockContext();
+		mockVscodeWorkspace.fs.stat.mockRejectedValue(new Error("ENOENT"));
+
+		handleWebviewMessage(
+			{ type: "open-file-link", path: "/nonexistent/file.ts" },
+			ctx,
+		);
+
+		await new Promise(r => setTimeout(r, 10));
+
+		expect(mockVscodeWindow.showTextDocument).not.toHaveBeenCalled();
+		// No error shown to user
+		expect(mockVscodeWindow.showErrorMessage).not.toHaveBeenCalled();
+	});
+
+	it("tries workspace folders for relative paths when first candidate fails", async () => {
+		const ctx = createMockContext({ wp: "/primary" });
+		const mockEditor = { selection: null, revealRange: vi.fn() };
+		mockVscodeWindow.showTextDocument.mockResolvedValue(mockEditor);
+
+		// First call (primary wp) fails, second (workspace folder) succeeds
+		mockVscodeWorkspace.fs.stat
+			.mockRejectedValueOnce(new Error("ENOENT"))
+			.mockResolvedValueOnce({ type: 1 });
+
+		handleWebviewMessage(
+			{ type: "open-file-link", path: "./lib/utils.ts" },
+			ctx,
+		);
+
+		await new Promise(r => setTimeout(r, 10));
+
+		expect(mockVscodeWorkspace.fs.stat).toHaveBeenCalledTimes(2);
+		expect(mockVscodeWindow.showTextDocument).toHaveBeenCalled();
 	});
 });
 

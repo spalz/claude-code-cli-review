@@ -12,31 +12,83 @@
 		return activeTerminalId;
 	};
 
-	window.addTerminal = function (id, name, claudeId) {
+	// ANSI-annotate file paths with dotted underline so they're always visible
+	var pathRegex = /((?:~\/|\.{1,2}\/|\/|[a-zA-Z]:[\\/])[\w.\-\\/]+\.\w{1,10}|(?:[\w.\-]+\/)+[\w.\-]+\.\w{1,10})(?::(\d+))?(?::(\d+))?/g;
+	// Splits stream into [ANSI escape sequences] and [plain text] chunks
+	var ansiSplitRegex = /(\x1b(?:\[[0-9;:]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]))/;
+	// Dotted underline + grey underline color
+	var LINK_START = "\x1b[4:4m\x1b[58;5;245m";
+	// Reset underline + reset underline color
+	var LINK_END = "\x1b[4:0m\x1b[59m";
+
+	window.annotateFileLinks = function (data) {
+		// Fast path: skip if no slash-like chars
+		if (data.indexOf("/") === -1 && data.indexOf("\\") === -1 && data.indexOf("~") === -1) {
+			return data;
+		}
+		// Split into ANSI escape and plain text segments, only apply regex to plain text
+		var parts = data.split(ansiSplitRegex);
+		var changed = false;
+		for (var i = 0; i < parts.length; i++) {
+			// Even indices are plain text, odd indices are ANSI escapes
+			if (i % 2 === 0 && parts[i]) {
+				var before = parts[i];
+				parts[i] = parts[i].replace(pathRegex, function (match) {
+					return LINK_START + match + LINK_END;
+				});
+				if (parts[i] !== before) changed = true;
+			}
+		}
+		if (changed) {
+			diagLog("links", "annotated", { inLen: data.length, outLen: parts.join("").length, parts: parts.length });
+		}
+		return parts.join("");
+	};
+
+	var nextPlaceholderId = -1;
+	window.addTerminal = function (id, name, claudeId, silent, lazy) {
+		// For lazy placeholders, generate a unique negative ID
+		if (lazy && id === -1) {
+			id = nextPlaceholderId--;
+		}
 		var displayName = name;
 		if (claudeId) {
 			var s = findCachedSession(claudeId);
 			if (s) displayName = s.title;
 		}
 
+		// Use object ref so lazy→real ID swap is picked up by closures
+		var sessionRef = { id: id };
+
 		// Tab element — inserted into header's terminal bar
 		var tab = document.createElement("div");
-		tab.className = "terminal-tab";
+		tab.className = "terminal-tab" + (lazy ? " lazy" : "");
 		tab.dataset.tid = id;
 
 		var nameSpan = document.createElement("span");
 		nameSpan.textContent = displayName;
-		nameSpan.onclick = function () {
-			activateTerminal(id);
-		};
 		nameSpan.ondblclick = function (e) {
 			e.stopPropagation();
-			startTabRename(id);
+			startTabRename(sessionRef.id);
+		};
+
+		var closeBtn = document.createElement("span");
+		closeBtn.className = "tab-close";
+		closeBtn.textContent = "\u00d7";
+		closeBtn.onclick = function (e) {
+			e.stopPropagation();
+			var ct = terminals.get(sessionRef.id);
+			send("close-terminal", { sessionId: sessionRef.id, claudeId: ct ? ct.claudeId : null });
 		};
 
 		tab.appendChild(nameSpan);
+		tab.appendChild(closeBtn);
+		tab.onclick = function (e) {
+			if (e.target === closeBtn) return;
+			activateTerminal(sessionRef.id);
+		};
 		tab.oncontextmenu = function (e) {
-			showTabCtxMenu(e, id);
+			showTabCtxMenu(e, sessionRef.id);
 		};
 		document.getElementById("terminalBar").appendChild(tab);
 
@@ -46,7 +98,7 @@
 		container.id = "term-" + id;
 		document.getElementById("terminalsArea").appendChild(container);
 
-		setupDragDrop(container, id);
+		setupDragDrop(container, sessionRef);
 
 		// xterm
 		var term = new Terminal({
@@ -68,10 +120,57 @@
 
 		var fitAddon = new FitAddon.FitAddon();
 		term.loadAddon(fitAddon);
+
+		// URL links (http/https) — open in browser
+		try {
+			var webLinksAddon = new WebLinksAddon.WebLinksAddon(function (event, uri) {
+				send("open-external-url", { url: uri });
+			});
+			term.loadAddon(webLinksAddon);
+		} catch (err) {
+			diagLog("links", "addon-FAILED", { error: String(err) });
+		}
+
 		term.open(container);
 
-		setupKeyHandler(term, id);
-		setupPasteHandler(container, id);
+		// File path links — custom provider (click-only, no hover decorations)
+		try {
+		term.registerLinkProvider({
+			provideLinks: function (y, callback) {
+				// y is 1-based buffer line number; getLine() is 0-based
+				var line = term.buffer.active.getLine(y - 1);
+				if (!line) return callback(undefined);
+				var text = line.translateToString();
+				if (!text) return callback(undefined);
+
+				var regex = /((?:~\/|\.{1,2}\/|\/|[a-zA-Z]:[\\/])[\w.\-\\/]+\.\w{1,10}|(?:[\w.\-]+\/)+[\w.\-]+\.\w{1,10})(?::(\d+))?(?::(\d+))?/g;
+				var links = [];
+				var m;
+				while ((m = regex.exec(text)) !== null) {
+					var filePath = m[1];
+					var ln = m[3] ? +m[2] : m[2] ? +m[2] : undefined;
+					var col = m[3] ? +m[3] : undefined;
+					var startX = m.index + 1;
+					var fullMatch = m[0];
+					(function (fp, l, c) {
+						links.push({
+							range: { start: { x: startX, y: y }, end: { x: startX + fullMatch.length, y: y } },
+							text: fullMatch,
+							activate: function () {
+								send("open-file-link", { path: fp, line: l, column: c });
+							}
+						});
+					})(filePath, ln, col);
+				}
+				callback(links.length ? links : undefined);
+			}
+		});
+		} catch (err) {
+			diagLog("links", "linkProvider-FAILED", { error: String(err) });
+		}
+
+		setupKeyHandler(term, sessionRef);
+		setupPasteHandler(container, sessionRef);
 
 		var cmdBuf = "";
 		term.onData(function (data) {
@@ -91,10 +190,10 @@
 			} else {
 				cmdBuf += data;
 			}
-			send("terminal-input", { sessionId: id, data: data });
+			send("terminal-input", { sessionId: sessionRef.id, data: data });
 		});
 		term.onResize(function (size) {
-			send("terminal-resize", { sessionId: id, cols: size.cols, rows: size.rows });
+			send("terminal-resize", { sessionId: sessionRef.id, cols: size.cols, rows: size.rows });
 		});
 
 		// Loading overlay — shown until TUI starts
@@ -127,19 +226,22 @@
 			container: container,
 			tabEl: tab,
 			loadingOverlay: overlay,
+			lazy: !!lazy,
+			sessionRef: sessionRef,
 		};
 		terminals.set(id, entry);
 
 		diagLog("terminal", "created", {
-			id: id, name: displayName, claudeId: claudeId, total: terminals.size
+			id: id, name: displayName, claudeId: claudeId, total: terminals.size, silent: !!silent
 		});
 
-		activateTerminal(id);
-		showTerminalView();
-
-		[100, 300, 800].forEach(function (ms) {
-			setTimeout(fitActiveTerminal, ms);
-		});
+		if (!silent) {
+			activateTerminal(id);
+			showTerminalView();
+			[100, 300, 800].forEach(function (ms) {
+				setTimeout(fitActiveTerminal, ms);
+			});
+		}
 	};
 
 	window.removeTerminal = function (id) {
@@ -165,15 +267,23 @@
 
 	function activateTerminal(id) {
 		var previousId = activeTerminalId;
+		var entry = terminals.get(id);
+
+		// Lazy tab — request PTY spawn on first activation
+		if (entry && entry.lazy && !entry.lazyRequested) {
+			entry.lazyRequested = true;
+			diagLog("terminal", "lazy-resume", { id: id, claudeId: entry.claudeId });
+			send("lazy-resume", { claudeId: entry.claudeId, placeholderPtyId: id });
+		}
+
 		activeTerminalId = id;
 		diagLog("terminal", "activate", { newId: id, prevId: previousId, total: terminals.size });
 		terminals.forEach(function (t, tid) {
 			t.container.classList.toggle("active", tid === id);
 			t.tabEl.classList.toggle("active", tid === id);
 		});
-		var active = terminals.get(id);
-		if (active) active.tabEl.scrollIntoView({ block: "nearest", inline: "nearest" });
-		var claudeIdVal = active ? active.claudeId || null : null;
+		if (entry) entry.tabEl.scrollIntoView({ block: "nearest", inline: "nearest" });
+		var claudeIdVal = entry ? entry.claudeId || null : null;
 		if (window.setActiveClaudeId) setActiveClaudeId(claudeIdVal);
 		send("set-active-session", { claudeId: claudeIdVal });
 		fitActiveTerminal();
@@ -335,7 +445,8 @@
 				} else if (action === "tab-reload") {
 					reopenTerminal(termId);
 				} else if (action === "tab-close") {
-					send("close-terminal", { sessionId: termId });
+					var ct = terminals.get(termId);
+					send("close-terminal", { sessionId: termId, claudeId: ct ? ct.claudeId : null });
 				}
 			};
 		});
@@ -343,7 +454,7 @@
 
 	// --- Drag & drop ---
 
-	function setupDragDrop(container, sessionId) {
+	function setupDragDrop(container, sessionRef) {
 		container.addEventListener("dragover", function (e) {
 			e.preventDefault();
 			e.dataTransfer.dropEffect = "copy";
@@ -360,24 +471,24 @@
 				e.dataTransfer.getData("text/plain") ||
 				e.dataTransfer.getData("text");
 			if (uri) {
-				send("file-dropped", { sessionId: sessionId, uri: uri });
+				send("file-dropped", { sessionId: sessionRef.id, uri: uri });
 			} else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
 				var filePath = e.dataTransfer.files[0].path || e.dataTransfer.files[0].name;
 				if (filePath)
-					send("file-dropped", { sessionId: sessionId, uri: "file://" + filePath });
+					send("file-dropped", { sessionId: sessionRef.id, uri: "file://" + filePath });
 			}
 		});
 	}
 
 	// --- Key handler ---
 
-	function setupKeyHandler(term, sessionId) {
+	function setupKeyHandler(term, sessionRef) {
 		var lastCtrlC = 0;
 		term.attachCustomKeyEventHandler(function (event) {
 			if (event.type !== "keydown") return true;
 			// Shift+Enter → send same sequence as Option+Enter (newline in Claude CLI)
 			if (event.shiftKey && event.key === "Enter") {
-				send("terminal-input", { sessionId: sessionId, data: "\x1b\n" });
+				send("terminal-input", { sessionId: sessionRef.id, data: "\x1b\n" });
 				return false;
 			}
 			if (event.ctrlKey && event.key === "c") {
@@ -395,7 +506,7 @@
 
 	// --- Image paste ---
 
-	function setupPasteHandler(container, sessionId) {
+	function setupPasteHandler(container, sessionRef) {
 		container.addEventListener("paste", function (e) {
 			var items = e.clipboardData && e.clipboardData.items;
 			if (!items) return;
@@ -410,7 +521,7 @@
 					reader.onload = function () {
 						var base64 = reader.result.split(",")[1];
 						send("paste-image", {
-							sessionId: sessionId,
+							sessionId: sessionRef.id,
 							data: base64,
 							mimeType: mimeType,
 						});
@@ -439,14 +550,15 @@
 	// --- Reopen / close error ---
 
 	window.closeErrorTerminal = function (sessionId) {
-		send("close-terminal", { sessionId: sessionId });
+		var t = terminals.get(sessionId);
+		send("close-terminal", { sessionId: sessionId, claudeId: t ? t.claudeId : null });
 	};
 
 	window.reopenTerminal = function (sessionId) {
 		var t = terminals.get(sessionId);
 		if (!t || !t.claudeId) return;
 		var claudeId = t.claudeId;
-		send("close-terminal", { sessionId: sessionId });
+		send("close-terminal", { sessionId: sessionId, claudeId: claudeId });
 		setTimeout(function () {
 			send("resume-claude-session", { claudeSessionId: claudeId });
 		}, 200);

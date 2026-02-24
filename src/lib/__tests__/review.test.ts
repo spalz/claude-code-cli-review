@@ -50,13 +50,15 @@ describe("FileReview", () => {
 });
 
 describe("buildMergedContent", () => {
-	it("unresolved hunk shows both removed and added blocks", () => {
+	it("unresolved hunk shows only added lines (hover-based approach)", () => {
 		const hunk = makeHunk({ id: 0, modStart: 1, removed: ["old"], added: ["new"] });
 		const { lines, ranges } = buildMergedContent(["new"], [hunk]);
-		expect(lines).toContain("old");
+		expect(lines).not.toContain("old");
 		expect(lines).toContain("new");
 		expect(ranges).toHaveLength(1);
 		expect(ranges[0].hunkId).toBe(0);
+		expect(ranges[0].removedStart).toBe(ranges[0].addedStart);
+		expect(ranges[0].removedEnd).toBe(ranges[0].addedStart);
 	});
 
 	it("resolved+accepted hunk shows only added lines", () => {
@@ -102,7 +104,7 @@ describe("buildMergedContent", () => {
 		expect(ranges).toHaveLength(1); // only h2 unresolved
 		expect(ranges[0].hunkId).toBe(1);
 		expect(lines).toContain("new1"); // accepted
-		expect(lines).toContain("old2"); // unresolved shows both
+		expect(lines).not.toContain("old2"); // unresolved only has added lines
 		expect(lines).toContain("new2");
 	});
 });

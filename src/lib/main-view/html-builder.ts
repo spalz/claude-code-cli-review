@@ -12,6 +12,7 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
 	const xtermCss = mediaUri("xterm.css");
 	const xtermJs = mediaUri("xterm.min.js");
 	const fitJs = mediaUri("addon-fit.min.js");
+	const webLinksJs = mediaUri("xterm-addon-web-links.js");
 	const stylesCss = webviewUri("styles.css");
 	const coreJs = webviewUri("core.js");
 	const diagJs = webviewUri("diag.js");
@@ -298,6 +299,7 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
 
 <script src="${xtermJs}"></script>
 <script src="${fitJs}"></script>
+<script src="${webLinksJs}"></script>
 <script src="${coreJs}"></script>
 <script src="${diagJs}"></script>
 <script src="${sessionsJs}"></script>

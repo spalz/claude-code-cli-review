@@ -44,7 +44,31 @@ export async function applyContentViaEdit(
 		if (rev) (rev as FileReview).mergedApplied = true;
 		return;
 	}
-	log.log(`applyContentViaEdit: applying via TextEditor.edit for ${filePath} (${newContent.length} chars)`);
+	const fname = filePath.split("/").pop();
+	const t0 = performance.now();
+	log.log(`applyContentViaEdit: START ${fname} (${newContent.length} chars)`);
+
+	// Fast path: if buffer already matches, skip editor.edit() entirely.
+	// This prevents CodeLens invalidation (~250ms flash) during undo of accept-only operations.
+	if (editor.document.getText() === newContent) {
+		log.log(`applyContentViaEdit: SKIP (buffer matches) ${fname}`);
+		const rev = state.activeReviews.get(filePath);
+		if (rev) {
+			(rev as FileReview).mergedApplied = true;
+			applyDecorations(editor, rev);
+		}
+		if (revealLine !== undefined) {
+			const clampedLine = Math.min(revealLine, editor.document.lineCount - 1);
+			editor.revealRange(
+				new vscode.Range(clampedLine, 0, clampedLine, 0),
+				vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+			);
+		}
+		mgr.syncState();
+		mgr.refreshUI();
+		log.log(`applyContentViaEdit: END ${fname} (skipped), total=${(performance.now() - t0).toFixed(1)}ms`);
+		return;
+	}
 
 	// Save scroll position and cursor before replacing content
 	const savedSelection = editor.selection;
@@ -54,18 +78,67 @@ export async function applyContentViaEdit(
 	let editSuccess = false;
 	try {
 		const doc = editor.document;
-		const lastLine = doc.lineCount - 1;
-		const fullRange = new vscode.Range(
-			0, 0,
-			lastLine, doc.lineAt(lastLine).text.length,
-		);
-		editSuccess = await editor.edit(
-			(eb) => eb.replace(fullRange, newContent),
-			{ undoStopBefore: true, undoStopAfter: true },
-		);
+		const tEdit = performance.now();
+
+		// Targeted edit: find minimal changed line range to preserve CodeLens on unchanged lines.
+		// Full buffer replace invalidates ALL CodeLens causing ~250ms flash.
+		const oldLines = doc.getText().split("\n");
+		const newLines = newContent.split("\n");
+
+		// Find common prefix
+		let prefixLen = 0;
+		const minLen = Math.min(oldLines.length, newLines.length);
+		while (prefixLen < minLen && oldLines[prefixLen] === newLines[prefixLen]) prefixLen++;
+
+		// Find common suffix (don't overlap with prefix)
+		let suffixLen = 0;
+		while (
+			suffixLen < minLen - prefixLen
+			&& oldLines[oldLines.length - 1 - suffixLen] === newLines[newLines.length - 1 - suffixLen]
+		) suffixLen++;
+
+		const oldStart = prefixLen;
+		const oldEnd = oldLines.length - suffixLen;
+		const newStart = prefixLen;
+		const newEnd = newLines.length - suffixLen;
+		const replacementText = newLines.slice(newStart, newEnd).join("\n");
+
+		if (oldStart === oldEnd && newStart === newEnd) {
+			// No actual difference — shouldn't happen (SKIP above catches exact match)
+			log.log(`applyContentViaEdit: targeted found no diff, treating as skip`);
+			editSuccess = true;
+		} else {
+			// Build the range to replace — include trailing newline for proper line boundaries.
+			// Range from (oldStart, 0) to (oldEnd, 0) covers lines [oldStart..oldEnd) INCLUDING
+			// their trailing newlines. At end-of-file, use last line's end instead.
+			const rangeStart = new vscode.Position(oldStart, 0);
+			const atEndOfFile = oldEnd >= doc.lineCount;
+			const rangeEnd = atEndOfFile
+				? new vscode.Position(doc.lineCount - 1, doc.lineAt(doc.lineCount - 1).text.length)
+				: new vscode.Position(oldEnd, 0);
+
+			// Replacement: join new lines with \n. Add trailing \n if range extends to
+			// start of next line (not at EOF) and we have replacement content.
+			let replacement = newLines.slice(newStart, newEnd).join("\n");
+			if (!atEndOfFile && replacement.length > 0) {
+				replacement += "\n";
+			} else if (atEndOfFile && newStart < newEnd && oldStart > 0) {
+				// Replacing at end of file — need leading \n if there was content before
+				// (only when the range we're replacing didn't start at line 0)
+			}
+
+			const editRange = new vscode.Range(rangeStart, rangeEnd);
+			log.log(`applyContentViaEdit: targeted edit lines ${oldStart}-${oldEnd} → ${newEnd - newStart} lines (of ${oldLines.length}→${newLines.length})`);
+			editSuccess = await editor.edit(
+				(eb) => eb.replace(editRange, replacement),
+				{ undoStopBefore: true, undoStopAfter: true },
+			);
+		}
+
+		log.log(`applyContentViaEdit: editor.edit()=${editSuccess}, ${(performance.now() - tEdit).toFixed(1)}ms`);
 		if (!editSuccess) {
-			// Retry once after a short delay — file watcher may be updating the buffer
-			log.log(`applyContentViaEdit: editor.edit() returned false for ${filePath}, retrying in 50ms`);
+			// Retry with full replace as fallback
+			log.log(`applyContentViaEdit: targeted edit failed, retrying with full replace`);
 			await new Promise((r) => setTimeout(r, 50));
 			const retryLastLine = doc.lineCount - 1;
 			const retryRange = new vscode.Range(
@@ -76,9 +149,12 @@ export async function applyContentViaEdit(
 				(eb) => eb.replace(retryRange, newContent),
 				{ undoStopBefore: true, undoStopAfter: true },
 			);
+			log.log(`applyContentViaEdit: retry edit()=${editSuccess}`);
 		}
 		if (editSuccess) {
+			const tSave = performance.now();
 			await saveWithoutFormatting(doc);
+			log.log(`applyContentViaEdit: saveWithoutFormatting ${(performance.now() - tSave).toFixed(1)}ms`);
 			// Mark that merged content is now on disk
 			const rev = state.activeReviews.get(filePath);
 			if (rev) (rev as FileReview).mergedApplied = true;
@@ -93,6 +169,22 @@ export async function applyContentViaEdit(
 	}
 
 	if (editSuccess) {
+		// Verify buffer matches after targeted edit; fallback to full replace if mismatched
+		if (editor.document.getText() !== newContent) {
+			log.log(`applyContentViaEdit: post-edit buffer mismatch, doing full replace fallback`);
+			setApplyingEdit(filePath, true);
+			try {
+				const doc = editor.document;
+				const fl = doc.lineCount - 1;
+				await editor.edit(
+					(eb) => eb.replace(new vscode.Range(0, 0, fl, doc.lineAt(fl).text.length), newContent),
+					{ undoStopBefore: false, undoStopAfter: true },
+				);
+				await saveWithoutFormatting(doc);
+			} finally {
+				setApplyingEdit(filePath, false);
+			}
+		}
 		const review = state.activeReviews.get(filePath);
 		if (review) applyDecorations(editor, review);
 	}
@@ -120,6 +212,7 @@ export async function applyContentViaEdit(
 
 	mgr.syncState();
 	mgr.refreshUI();
+	log.log(`applyContentViaEdit: END ${fname}, total=${(performance.now() - t0).toFixed(1)}ms, editSuccess=${editSuccess}`);
 }
 
 /**
