@@ -141,28 +141,48 @@
 							setTimeout(function () {
 								t.term.scrollToBottom();
 							}, 100);
-						}, 800); // LOAD_IDLE_MS
+						}, 2500); // LOAD_IDLE_MS
 						break;
 					}
 
 					var before = getTermBufferState(t);
 					var buf = t.term.buffer.active;
 					var isAlt = buf.type === "alternate";
-					var wasAtBottom = isAlt || (buf.baseY - buf.viewportY) <= SCROLL_BOTTOM_THRESHOLD;
-					var recentInput = t.lastInputTime && Date.now() - t.lastInputTime < RECENT_INPUT_MS;
+					var wasAtBottom = isAlt || buf.baseY - buf.viewportY <= SCROLL_BOTTOM_THRESHOLD;
+					var recentInput =
+						t.lastInputTime && Date.now() - t.lastInputTime < RECENT_INPUT_MS;
+					var baseYBefore = buf.baseY;
 
 					// Detect screen-switching sequences
 					var hasAltEnter = msg.data.indexOf("\x1b[?1049h") !== -1;
 					var hasAltExit = msg.data.indexOf("\x1b[?1049l") !== -1;
-					var hasFullRedraw = msg.data.indexOf("\x1b[H\x1b[2J") !== -1 || msg.data.indexOf("\x1b[2J") !== -1;
+					var hasFullRedraw =
+						msg.data.indexOf("\x1b[H\x1b[2J") !== -1 ||
+						msg.data.indexOf("\x1b[2J") !== -1;
 
 					t.term.write(window.annotateFileLinks(msg.data));
 
+					// Track image edit mode and bind new [Image #N] to pending images
+					if (typeof processImageOutput === "function") {
+						processImageOutput(msg.data, msg.sessionId);
+					}
+
 					var afterBuf = t.term.buffer.active;
 					var isAltAfter = afterBuf.type === "alternate";
+					var baseYAfter = afterBuf.baseY;
+					var scrollbackGrew = baseYAfter > baseYBefore;
+
+					// TUI refresh: \x1b[H\x1b[2J rewrites same viewport, baseY unchanged.
+					// Real clear (user typed `clear`): recentInput=true handles it.
+					var isTuiRefresh = hasFullRedraw && !scrollbackGrew;
+
 					// Force scroll-to-bottom on: already at bottom, recent user input,
-					// full screen redraw (clearScreen / cursor-home+erase), or screen switch
-					var didScroll = wasAtBottom || recentInput || hasFullRedraw || hasAltEnter || hasAltExit;
+					// screen switch, or full redraw that actually grew scrollback.
+					// Suppress hasFullRedraw when it's a TUI viewport refresh (no new scrollback).
+					var didScroll = wasAtBottom || recentInput || hasAltEnter || hasAltExit;
+					if (hasFullRedraw && !isTuiRefresh) {
+						didScroll = true;
+					}
 					if (didScroll) {
 						t.term.scrollToBottom();
 					}
@@ -170,12 +190,31 @@
 					var jumped =
 						!didScroll && before && after && before.viewportY !== after.viewportY;
 
+					// Log suppressed TUI refresh (user scrolled up, TUI redraw didn't move viewport)
+					if (isTuiRefresh && !wasAtBottom) {
+						diagLogThrottled("scroll-diag", "TUI-REFRESH-SUPPRESSED", {
+							sid: msg.sessionId,
+							len: msg.data.length,
+							baseY: baseYAfter,
+							viewportY: afterBuf.viewportY,
+						});
+					}
+
 					// Log forced-scroll from fullRedraw/screen-switch
 					if (didScroll && !wasAtBottom && !recentInput) {
 						diagLog("scroll-diag", "FORCE-SCROLL-BOTTOM", {
 							sid: msg.sessionId,
 							len: msg.data.length,
-							reason: hasFullRedraw ? "fullRedraw" : hasAltEnter ? "altEnter" : "altExit",
+							reason: hasAltEnter
+								? "altEnter"
+								: hasAltExit
+									? "altExit"
+									: hasFullRedraw
+										? "fullRedraw-grew"
+										: "unknown",
+							scrollbackGrew: scrollbackGrew,
+							baseYBefore: baseYBefore,
+							baseYAfter: baseYAfter,
 							before: before,
 							after: after,
 						});
@@ -419,6 +458,12 @@
 				showOnboarding(msg);
 				break;
 
+			case "image-pending":
+				if (typeof enqueueImage === "function") {
+					enqueueImage(msg.base64, msg.mimeType, msg.filePath, msg.ptyId);
+				}
+				break;
+
 			case "play-notification-sound":
 				playNotificationSound();
 				break;
@@ -426,30 +471,36 @@
 	});
 
 	// --- Notification sound via Web Audio API ---
+	// Cursor-style chime: C4 (261Hz) + E4 (329Hz) major third, soft bell tone
 	function playNotificationSound() {
 		try {
 			var ctx = new (window.AudioContext || window.webkitAudioContext)();
 			var now = ctx.currentTime;
 
-			// Two-tone chime: 880Hz → 1047Hz
-			var freqs = [880, 1047];
-			var duration = 0.15;
+			// C4 + E4 major third — simultaneous onset, E4 sustains longer
+			var notes = [
+				{ freq: 261.63, gain: 0.12, attack: 0.05, decay: 0.6 }, // C4 — fades first
+				{ freq: 329.63, gain: 0.1, attack: 0.05, decay: 0.85 }, // E4 — sustains longer
+			];
 
-			freqs.forEach(function (freq, i) {
+			notes.forEach(function (n) {
 				var osc = ctx.createOscillator();
-				var gain = ctx.createGain();
+				var gainNode = ctx.createGain();
 				osc.type = "sine";
-				osc.frequency.value = freq;
-				gain.gain.setValueAtTime(0.3, now + i * duration);
-				gain.gain.exponentialRampToValueAtTime(0.001, now + i * duration + duration);
-				osc.connect(gain);
-				gain.connect(ctx.destination);
-				osc.start(now + i * duration);
-				osc.stop(now + i * duration + duration);
+				osc.frequency.value = n.freq;
+				// Quick attack → long exponential decay (bell envelope)
+				gainNode.gain.setValueAtTime(0.001, now);
+				gainNode.gain.linearRampToValueAtTime(n.gain, now + n.attack);
+				gainNode.gain.exponentialRampToValueAtTime(0.001, now + n.decay);
+				osc.connect(gainNode);
+				gainNode.connect(ctx.destination);
+				osc.start(now);
+				osc.stop(now + n.decay);
 			});
 
-			// Close context after sound completes
-			setTimeout(function () { ctx.close(); }, 500);
+			setTimeout(function () {
+				ctx.close();
+			}, 1200);
 		} catch (e) {
 			// Web Audio API not available — silently ignore
 		}

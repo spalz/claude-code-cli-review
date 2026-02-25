@@ -19,10 +19,10 @@
 	var pathRegex = /((?:~\/|\.{1,2}\/|\/|[a-zA-Z]:[\\/])[\w.\-\\/]+\.\w{1,10}|(?:[\w.\-]+\/)+[\w.\-]+\.\w{1,10})(?::(\d+))?(?::(\d+))?/g;
 	// Splits stream into [ANSI escape sequences] and [plain text] chunks
 	var ansiSplitRegex = /(\x1b(?:\[[0-9;:]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]))/;
-	// Dotted underline + grey underline color
-	var LINK_START = "\x1b[4:4m\x1b[58;5;245m";
+	// Underline + grey underline color
+	var LINK_START = "\x1b[4m\x1b[58;5;245m";
 	// Reset underline + reset underline color
-	var LINK_END = "\x1b[4:0m\x1b[59m";
+	var LINK_END = "\x1b[24m\x1b[59m";
 
 	// --- Timing & size constants ---
 	var FIT_DELAYS_MS = [100, 300, 800];
@@ -34,11 +34,12 @@
 	var SCROLL_BOTTOM_THRESHOLD = 5;
 	// Idle timeout to detect "loading complete" after resume.
 	// After last terminal-output chunk, wait this long before declaring load done.
-	var LOAD_IDLE_MS = 800;
+	var LOAD_IDLE_MS = 2000;
 
 	window.annotateFileLinks = function (data) {
-		// Fast path: skip if no slash-like chars
-		if (data.indexOf("/") === -1 && data.indexOf("\\") === -1 && data.indexOf("~") === -1) {
+		var hasPath = data.indexOf("/") !== -1 || data.indexOf("\\") !== -1 || data.indexOf("~") !== -1;
+		// Fast path: skip if nothing to annotate
+		if (!hasPath) {
 			return data;
 		}
 		// Split into ANSI escape and plain text segments, only apply regex to plain text
@@ -134,6 +135,142 @@
 		return { term: term, fitAddon: fitAddon };
 	}
 
+	/** Register link provider for multi-line URLs that TUI cursor positioning breaks */
+	function registerWrappedUrlLinkProvider(term) {
+		// Characters that terminate a URL
+		var URL_TERMINATORS = /[\s"'<>(){}\[\]|\\^`]/;
+
+		function getLineText(buf, row) {
+			var line = buf.getLine(row);
+			return line ? line.translateToString(true) : "";
+		}
+
+		/** Scan forward from urlStart on startRow, collecting URL chars across lines */
+		function scanForward(buf, startRow, urlStart, cols, maxRows) {
+			var fullUrl = "";
+			var text = getLineText(buf, startRow);
+			// Grab from urlStart to end of line
+			var chunk = text.substring(urlStart);
+			// Find terminator in this chunk
+			var termMatch = URL_TERMINATORS.exec(chunk);
+			if (termMatch) {
+				fullUrl = chunk.substring(0, termMatch.index);
+				return { url: fullUrl, endRow: startRow, endCol: urlStart + termMatch.index };
+			}
+			fullUrl = chunk;
+			// If line doesn't fill terminal width, URL ends here
+			if (text.length < cols - 2) {
+				return { url: fullUrl, endRow: startRow, endCol: urlStart + chunk.length };
+			}
+			// Scan next lines
+			for (var r = startRow + 1; r < startRow + maxRows && r < buf.length; r++) {
+				var nextText = getLineText(buf, r);
+				// Stop if line is empty or starts with whitespace
+				if (!nextText || /^\s/.test(nextText)) break;
+				var term = URL_TERMINATORS.exec(nextText);
+				if (term) {
+					fullUrl += nextText.substring(0, term.index);
+					return { url: fullUrl, endRow: r, endCol: term.index };
+				}
+				fullUrl += nextText;
+				if (nextText.length < cols - 2) {
+					return { url: fullUrl, endRow: r, endCol: nextText.length };
+				}
+			}
+			return { url: fullUrl, endRow: startRow + maxRows - 1, endCol: cols };
+		}
+
+		try {
+			term.registerLinkProvider({
+				provideLinks: function (y, callback) {
+					var buf = term.buffer.active;
+					var row = y - 1;
+					var cols = term.cols;
+					var text = getLineText(buf, row);
+					if (!text) return callback(undefined);
+
+					var links = [];
+					var MAX_SCAN = 10;
+
+					// Strategy 1: "down" — this line contains https?://
+					var urlRe = /https?:\/\//g;
+					var m;
+					while ((m = urlRe.exec(text)) !== null) {
+						var result = scanForward(buf, row, m.index, cols, MAX_SCAN);
+						diagLog("links", "wrappedUrl-scan-down", {
+							y: y, textLen: text.length, cols: cols,
+							urlStart: m.index, resultUrl: result.url ? result.url.slice(0, 60) + "..." : null,
+							endRow: result.endRow, startRow: row, multiLine: result.endRow > row
+						});
+						if (!result.url) continue;
+						// Only handle multi-line URLs (single-line handled by WebLinksAddon)
+						if (result.endRow <= row) continue;
+						try { new URL(result.url); } catch (_) {
+							diagLog("links", "wrappedUrl-invalid", { url: result.url.slice(0, 80) });
+							continue;
+						}
+						var fullUrl = result.url;
+						var startX = m.index + 1;
+						var endRow = result.endRow;
+						var endCol = result.endCol;
+						(function (url, sx, ey, ec) {
+							links.push({
+								range: { start: { x: sx, y: y }, end: { x: ec + 1, y: ey + 1 } },
+								text: url,
+								activate: function () {
+									send("open-external-url", { url: url });
+								}
+							});
+						})(fullUrl, startX, endRow, endCol);
+					}
+
+					// Strategy 2: "up" — this line may be a continuation of a URL from above
+					if (!links.length && text && !/^\s/.test(text)) {
+						// Check if previous line is filled and contains https?://
+						var prevRow = row - 1;
+						if (prevRow >= 0) {
+							var prevText = getLineText(buf, prevRow);
+							if (prevText && prevText.length >= cols - 2 && /https?:\/\//.test(prevText)) {
+								// Scan backwards to find start of URL
+								var urlStartRow = prevRow;
+								var urlStartCol = prevText.search(/https?:\/\//);
+								for (var r = prevRow - 1; r >= Math.max(0, prevRow - MAX_SCAN); r--) {
+									var rText = getLineText(buf, r);
+									var rIdx = rText.search(/https?:\/\//);
+									if (rIdx >= 0) {
+										urlStartRow = r;
+										urlStartCol = rIdx;
+									}
+									if (rText.length < cols - 2) break;
+								}
+								var result = scanForward(buf, urlStartRow, urlStartCol, cols, MAX_SCAN);
+								if (result.url && result.endRow > urlStartRow) {
+									try {
+										new URL(result.url);
+										var fullUrl = result.url;
+										(function (url, sr, sc, er, ec) {
+											links.push({
+												range: { start: { x: sc + 1, y: sr + 1 }, end: { x: ec + 1, y: er + 1 } },
+												text: url,
+												activate: function () {
+													send("open-external-url", { url: url });
+												}
+											});
+										})(fullUrl, urlStartRow, urlStartCol, result.endRow, result.endCol);
+									} catch (_) { /* invalid URL */ }
+								}
+							}
+						}
+					}
+
+					callback(links.length ? links : undefined);
+				}
+			});
+		} catch (err) {
+			diagLog("links", "wrappedUrlProvider-FAILED", { error: String(err) });
+		}
+	}
+
 	/** Register clickable file-path link provider on a terminal */
 	function registerFileLinkProvider(term) {
 		try {
@@ -168,6 +305,220 @@
 			});
 		} catch (err) {
 			diagLog("links", "linkProvider-FAILED", { error: String(err) });
+		}
+	}
+
+	// --- Image registry and link provider ---
+
+	var imageRegistry = new Map(); // CLI index → { base64, mimeType }
+	/** Per-PTY-session pending image queues: ptyId → [{base64, mimeType, filePath}] */
+	var pendingBySession = new Map();
+	/** Track which CLI [Image #N] we've already bound per session */
+	var boundBySession = new Map(); // ptyId → Set of CLI indices
+	/** Per-session: CLI is in image edit mode (arrows/delete to manage images) */
+	var imageEditModeBySession = new Map(); // ptyId → boolean
+	/** All known image data by file path (for tooltip/open regardless of bind order) */
+	var imageDataByPath = new Map(); // filePath → { base64, mimeType }
+
+	window.enqueueImage = function (base64, mimeType, filePath, ptyId) {
+		// Always store data by path for later lookup
+		imageDataByPath.set(filePath, { base64: base64, mimeType: mimeType });
+		// Skip FIFO queue if CLI is in image edit mode — paste won't create [Image #N]
+		if (imageEditModeBySession.get(ptyId)) {
+			diagLog("images", "enqueue-skipped-edit-mode", { ptyId: ptyId, filePath: filePath });
+			return;
+		}
+		var q = pendingBySession.get(ptyId);
+		if (!q) { q = []; pendingBySession.set(ptyId, q); }
+		q.push({ base64: base64, mimeType: mimeType, filePath: filePath });
+		diagLog("images", "enqueued", { ptyId: ptyId, queueLen: q.length, filePath: filePath });
+	};
+
+	/**
+	 * Called from message-router on every terminal-output chunk.
+	 * Detects CLI image edit mode and binds new [Image #N] to pending images.
+	 */
+	window.processImageOutput = function (data, sessionId) {
+		// Detect image edit mode: "Delete to remove" in CLI status line
+		var isEditMode = data.indexOf("Delete to remove") !== -1;
+		var wasEditMode = imageEditModeBySession.get(sessionId) || false;
+		if (isEditMode !== wasEditMode) {
+			imageEditModeBySession.set(sessionId, isEditMode);
+			if (isEditMode) {
+				diagLog("images", "edit-mode-enter", { ptyId: sessionId });
+			} else {
+				// Exiting edit mode: flush stale pending items that accumulated
+				// during edit mode (shouldn't be any if enqueue was skipped, but safety)
+				diagLog("images", "edit-mode-exit", { ptyId: sessionId });
+			}
+		}
+
+		// Bind new [Image #N] from output
+		if (data.indexOf("[Image #") === -1) return;
+		var regex = /\[Image #(\d+)\]/g;
+		var m;
+		var bound = boundBySession.get(sessionId);
+		if (!bound) { bound = new Set(); boundBySession.set(sessionId, bound); }
+		while ((m = regex.exec(data)) !== null) {
+			var idx = +m[1];
+			if (!bound.has(idx)) {
+				bound.add(idx);
+				var q = pendingBySession.get(sessionId);
+				var pending = q ? q.shift() : undefined;
+				if (pending) {
+					imageRegistry.set(idx, { base64: pending.base64, mimeType: pending.mimeType });
+					send("bind-image", { cliIndex: idx, ptyId: sessionId });
+					diagLog("images", "bound", { ptyId: sessionId, cliIndex: idx, filePath: pending.filePath, queueRemaining: q ? q.length : 0 });
+				} else {
+					diagLog("images", "no-pending-for", { ptyId: sessionId, cliIndex: idx });
+				}
+			}
+		}
+	};
+
+	var imageTooltipEl = null;
+	var TOOLTIP_GAP = 8; // gap between cursor and tooltip
+	var TOOLTIP_PADDING = 4; // CSS padding inside tooltip
+	var TOOLTIP_BORDER = 1; // CSS border width
+
+	function showImageTooltip(index, x, y) {
+		var img = imageRegistry.get(index);
+		if (!img) return;
+		hideImageTooltip();
+		imageTooltipEl = document.createElement("div");
+		imageTooltipEl.style.cssText = "position:fixed;z-index:9999;background:var(--vscode-editorHoverWidget-background,#252526);border:1px solid var(--vscode-editorHoverWidget-border,#454545);border-radius:4px;padding:" + TOOLTIP_PADDING + "px;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.3);visibility:hidden";
+		var imgEl = document.createElement("img");
+		imgEl.src = "data:" + img.mimeType + ";base64," + img.base64;
+		imgEl.style.cssText = "max-width:300px;max-height:200px;display:block";
+		imageTooltipEl.appendChild(imgEl);
+		document.body.appendChild(imageTooltipEl);
+		// Position after image loads (to know actual dimensions)
+		imgEl.onload = function () {
+			positionTooltip(x, y);
+		};
+		// Fallback: if cached, onload may not fire
+		if (imgEl.complete) {
+			positionTooltip(x, y);
+		}
+	}
+
+	function positionTooltip(mouseX, mouseY) {
+		if (!imageTooltipEl) return;
+		var vw = document.documentElement.clientWidth;
+		var vh = document.documentElement.clientHeight;
+		var tw = imageTooltipEl.offsetWidth;
+		var th = imageTooltipEl.offsetHeight;
+
+		// Horizontal: prefer right of cursor, flip left if overflows
+		var left = mouseX + TOOLTIP_GAP;
+		if (left + tw > vw) {
+			left = mouseX - TOOLTIP_GAP - tw;
+		}
+		// Clamp to viewport
+		if (left < 0) left = 0;
+
+		// Vertical: prefer above cursor, flip below if overflows
+		var top = mouseY - TOOLTIP_GAP - th;
+		if (top < 0) {
+			top = mouseY + TOOLTIP_GAP;
+		}
+		// Clamp to viewport
+		if (top + th > vh) {
+			top = vh - th;
+		}
+		if (top < 0) top = 0;
+
+		imageTooltipEl.style.left = left + "px";
+		imageTooltipEl.style.top = top + "px";
+		imageTooltipEl.style.visibility = "visible";
+	}
+
+	function hideImageTooltip() {
+		if (imageTooltipEl) {
+			imageTooltipEl.remove();
+			imageTooltipEl = null;
+		}
+	}
+
+	/** Register clickable [Image #N] link provider + mouseover tooltip on a terminal */
+	function registerImageLinkProvider(term) {
+		var imageTagRegex = /\[Image #(\d+)\]/g;
+		try {
+			// Link provider for click handling
+			term.registerLinkProvider({
+				provideLinks: function (y, callback) {
+					var line = term.buffer.active.getLine(y - 1);
+					if (!line) return callback(undefined);
+					var text = line.translateToString();
+					if (!text) return callback(undefined);
+
+					imageTagRegex.lastIndex = 0;
+					var links = [];
+					var m;
+					while ((m = imageTagRegex.exec(text)) !== null) {
+						var imgIndex = +m[1];
+						var startX = m.index + 1;
+						var fullMatch = m[0];
+						(function (idx, sx, len, lineY) {
+							links.push({
+								// end.x - 1 to work around xterm.js off-by-one link underline rendering
+								range: { start: { x: sx, y: lineY }, end: { x: sx + len - 1, y: lineY } },
+								text: fullMatch,
+								activate: function () {
+									hideImageTooltip();
+									send("open-image", { index: idx });
+								}
+							});
+						})(imgIndex, startX, fullMatch.length, y);
+					}
+					callback(links.length ? links : undefined);
+				}
+			});
+			// Hover tooltip via mouse tracking on terminal element
+			var currentHoverIndex = null;
+			var hoverRegex = /\[Image #(\d+)\]/g;
+			term.element.addEventListener("mousemove", function (e) {
+				// Get cell coordinates from mouse position
+				var core = term._core;
+				if (!core || !core._renderService) { hideImageTooltip(); currentHoverIndex = null; return; }
+				var dims = core._renderService.dimensions;
+				if (!dims || !dims.css || !dims.css.cell) { hideImageTooltip(); currentHoverIndex = null; return; }
+				var rect = term.element.getBoundingClientRect();
+				var col = Math.floor((e.clientX - rect.left) / dims.css.cell.width);
+				var row = Math.floor((e.clientY - rect.top) / dims.css.cell.height);
+				var bufRow = row + term.buffer.active.viewportY;
+				var line = term.buffer.active.getLine(bufRow);
+				if (!line) { hideImageTooltip(); currentHoverIndex = null; return; }
+				var text = line.translateToString();
+				hoverRegex.lastIndex = 0;
+				var found = null;
+				var hm;
+				while ((hm = hoverRegex.exec(text)) !== null) {
+					if (col >= hm.index && col < hm.index + hm[0].length) {
+						found = +hm[1];
+						break;
+					}
+				}
+				if (found !== null && imageRegistry.has(found)) {
+					if (currentHoverIndex !== found) {
+						currentHoverIndex = found;
+						showImageTooltip(found, e.clientX, e.clientY);
+					} else if (imageTooltipEl) {
+						positionTooltip(e.clientX, e.clientY);
+					}
+				} else {
+					if (currentHoverIndex !== null) {
+						hideImageTooltip();
+						currentHoverIndex = null;
+					}
+				}
+			});
+			term.element.addEventListener("mouseleave", function () {
+				hideImageTooltip();
+				currentHoverIndex = null;
+			});
+		} catch (err) {
+			diagLog("links", "imageLinkProvider-FAILED", { error: String(err) });
 		}
 	}
 
@@ -251,6 +602,8 @@
 
 		var xt = createXterm(container);
 		registerFileLinkProvider(xt.term);
+		registerWrappedUrlLinkProvider(xt.term);
+		registerImageLinkProvider(xt.term);
 		setupKeyHandler(xt.term, sessionRef);
 		blockXtermPaste(xt.term);
 

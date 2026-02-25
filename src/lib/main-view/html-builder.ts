@@ -32,7 +32,7 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
   style-src ${webview.cspSource} 'unsafe-inline';
   script-src ${webview.cspSource};
   font-src ${webview.cspSource};
-  img-src ${webview.cspSource};">
+  img-src ${webview.cspSource} data:;">
 <link rel="stylesheet" href="${xtermCss}">
 <link rel="stylesheet" href="${stylesCss}">
 <style>

@@ -27,7 +27,7 @@ const mockActions = vi.hoisted(() => ({
 }));
 vi.mock("../actions", () => mockActions);
 
-import { handleWebviewMessage } from "../main-view/message-handler";
+import { handleWebviewMessage, ImageTracker } from "../main-view/message-handler";
 import type { MessageContext } from "../main-view/message-handler";
 import type { ExtensionToWebviewMessage, HookStatus } from "../../types";
 import { window as mockVscodeWindow, env as mockVscodeEnv, workspace as mockVscodeWorkspace } from "./mocks/vscode";
@@ -56,6 +56,7 @@ function createMockContext(overrides?: Partial<MessageContext>): MessageContext 
 		getKeybindings: vi.fn().mockReturnValue([]),
 		webviewReady: false,
 		pendingHookStatus: null,
+		imageTracker: new ImageTracker(),
 		...overrides,
 	};
 }

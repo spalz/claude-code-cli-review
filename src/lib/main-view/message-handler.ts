@@ -28,6 +28,7 @@ export interface MessageContext {
 	webviewReady: boolean;
 	pendingHookStatus: HookStatus | null;
 	workspaceState?: vscode.Memento;
+	imageTracker: ImageTracker;
 }
 
 export interface MessageResult {
@@ -53,14 +54,19 @@ export interface MessageResult {
 export async function resolveClipboard(): Promise<{ type: "text"; text: string } | { type: "image"; tmpPath: string } | null> {
 	if (process.platform === "darwin") {
 		// 1. Try file URL — full path from Finder copy
+		// Validate: real file paths start with /, contain no newlines, and exist on disk.
+		// Rich text from editors can produce spurious furl results.
 		try {
 			const filePath = cp.execSync(
 				`osascript -e 'try' -e 'set theFiles to POSIX path of (the clipboard as «class furl»)' -e 'return theFiles' -e 'end try'`,
 				{ encoding: "utf8", timeout: 2000 },
 			).trim();
-			if (filePath) {
+			if (filePath && filePath.startsWith("/") && !filePath.includes("\n") && fs.existsSync(filePath)) {
 				log.log(`clipboard: file path via osascript: "${filePath}"`);
 				return { type: "text", text: filePath };
+			}
+			if (filePath) {
+				log.log(`clipboard: furl rejected (not a valid file path): "${filePath.slice(0, 80)}"`);
 			}
 		} catch {
 			// No file URL — continue
@@ -93,6 +99,40 @@ export async function resolveClipboard(): Promise<{ type: "text"; text: string }
 	// Non-macOS: just read text
 	const text = await vscode.env.clipboard.readText();
 	return text ? { type: "text", text } : null;
+}
+
+export class ImageTracker {
+	/** Images keyed by CLI's [Image #N] number */
+	private _bound: Map<number, string> = new Map(); // cliIndex → filePath
+	/** Per-PTY-session FIFO queues of pending images */
+	private _queues: Map<number, { filePath: string; base64: string; mimeType: string }[]> = new Map();
+
+	/** Queue an image for a specific PTY session */
+	enqueue(ptyId: number, filePath: string, base64: string, mimeType: string): void {
+		let q = this._queues.get(ptyId);
+		if (!q) { q = []; this._queues.set(ptyId, q); }
+		q.push({ filePath, base64, mimeType });
+	}
+
+	/** Shift oldest pending for a PTY session */
+	shiftPending(ptyId: number): { filePath: string; base64: string; mimeType: string } | undefined {
+		const q = this._queues.get(ptyId);
+		return q?.shift();
+	}
+
+	/** Bind CLI's [Image #N] to a file path (called after shiftPending) */
+	bind(cliIndex: number, filePath: string): void {
+		this._bound.set(cliIndex, filePath);
+	}
+
+	getImagePath(index: number): string | undefined {
+		return this._bound.get(index);
+	}
+
+	clear(): void {
+		this._bound.clear();
+		this._queues.clear();
+	}
 }
 
 export function handleWebviewMessage(
@@ -277,10 +317,36 @@ export function handleWebviewMessage(
 				if (result.type === "text") {
 					log.log(`read-clipboard: session #${clipSessionId}, text len=${result.text.length}, "${result.text.slice(0, 80)}"`);
 					ctx.ptyManager.writeToSession(clipSessionId, `\x1b[200~${result.text}\x1b[201~`);
+					// If pasted text is a path to an image file, register it for preview
+					const imageExts = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
+					const textLower = result.text.trim().toLowerCase();
+					if (imageExts.some(ext => textLower.endsWith(ext))) {
+						try {
+							const imgPath = result.text.trim();
+							if (fs.existsSync(imgPath)) {
+								const base64 = fs.readFileSync(imgPath).toString("base64");
+								const mimeType = textLower.endsWith(".png") ? "image/png" : "image/jpeg";
+								ctx.imageTracker.enqueue(clipSessionId, imgPath, base64, mimeType);
+								ctx.postMessage({ type: "image-pending", base64, mimeType, filePath: imgPath, ptyId: clipSessionId });
+								log.log(`read-clipboard: enqueued image from text path`);
+							}
+						} catch (err) {
+							log.log(`read-clipboard: image register from text failed: ${(err as Error).message}`);
+						}
+					}
 				} else {
 					// Image (screenshot) — send temp file path so Claude CLI reads it
 					log.log(`read-clipboard: session #${clipSessionId}, image at ${result.tmpPath}`);
 					ctx.ptyManager.writeToSession(clipSessionId, `\x1b[200~${result.tmpPath}\x1b[201~`);
+					// Enqueue image for binding when CLI outputs [Image #N]
+					try {
+						const base64 = fs.readFileSync(result.tmpPath).toString("base64");
+						const mimeType = result.tmpPath.endsWith(".png") ? "image/png" : "image/jpeg";
+						ctx.imageTracker.enqueue(clipSessionId, result.tmpPath, base64, mimeType);
+						ctx.postMessage({ type: "image-pending", base64, mimeType, filePath: result.tmpPath, ptyId: clipSessionId });
+					} catch (err) {
+						log.log(`read-clipboard: image enqueue failed: ${(err as Error).message}`);
+					}
 				}
 			});
 			break;
@@ -394,6 +460,10 @@ export function handleWebviewMessage(
 				fs.writeFileSync(tmpFile, Buffer.from(msg.data as string, "base64"));
 				log.log(`paste-image: saved to ${tmpFile}`);
 				ctx.ptyManager.writeToSession(msg.sessionId as number, tmpFile);
+				// Enqueue image for binding when CLI outputs [Image #N]
+				const pasteSessionId = msg.sessionId as number;
+				ctx.imageTracker.enqueue(pasteSessionId, tmpFile, msg.data as string, mimeType);
+				ctx.postMessage({ type: "image-pending", base64: msg.data as string, mimeType, filePath: tmpFile, ptyId: pasteSessionId });
 			} catch (err) {
 				log.log(`paste-image error: ${(err as Error).message}`);
 			}
@@ -516,6 +586,27 @@ export function handleWebviewMessage(
 		case "open-external-url":
 			vscode.env.openExternal(vscode.Uri.parse(msg.url as string));
 			break;
+
+		case "open-image": {
+			const imgPath = ctx.imageTracker.getImagePath(msg.index as number);
+			if (imgPath) {
+				vscode.commands.executeCommand("vscode.open", vscode.Uri.file(imgPath));
+			}
+			break;
+		}
+
+		case "bind-image": {
+			const cliIdx = msg.cliIndex as number;
+			const bindPtyId = msg.ptyId as number;
+			const pending = ctx.imageTracker.shiftPending(bindPtyId);
+			if (pending) {
+				ctx.imageTracker.bind(cliIdx, pending.filePath);
+				log.log(`bind-image: pty#${bindPtyId} CLI #${cliIdx} → ${pending.filePath}`);
+			} else {
+				log.log(`bind-image: pty#${bindPtyId} CLI #${cliIdx} — no pending image`);
+			}
+			break;
+		}
 
 		case "open-file-link": {
 			let filePath = msg.path as string;

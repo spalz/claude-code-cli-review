@@ -6,7 +6,7 @@ import type { ReviewManager } from "../review-manager";
 import type { HookStatus, ExtensionToWebviewMessage } from "../../types";
 import { buildWebviewHtml } from "./html-builder";
 import { SessionManager } from "./session-manager";
-import { handleWebviewMessage } from "./message-handler";
+import { handleWebviewMessage, ImageTracker } from "./message-handler";
 import { buildStateUpdate, getKeybindings } from "./state-updater";
 
 export class MainViewProvider implements vscode.WebviewViewProvider {
@@ -18,6 +18,7 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 	private readonly _sessionMgr: SessionManager;
 	private _reviewManager: ReviewManager | undefined;
 	private readonly _workspaceState: vscode.Memento | undefined;
+	private readonly _imageTracker = new ImageTracker();
 
 	constructor(
 		private readonly _wp: string,
@@ -61,6 +62,7 @@ export class MainViewProvider implements vscode.WebviewViewProvider {
 				webviewReady: this._webviewReady,
 				pendingHookStatus: this._pendingHookStatus,
 				workspaceState: this._workspaceState,
+				imageTracker: this._imageTracker,
 			});
 			this._webviewReady = result.webviewReady;
 			this._pendingHookStatus = result.pendingHookStatus;

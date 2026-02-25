@@ -36,6 +36,7 @@ export type ExtensionToWebviewMessage =
 	| { type: "activate-lazy-session"; claudeId: string }
 	| { type: "show-onboarding"; folderName: string; workspacePath: string; hooksInstalled: boolean; mcpServers: string[] }
 	| { type: "play-notification-sound" }
+	| { type: "image-pending"; base64: string; mimeType: string; filePath: string; ptyId: number }
 ;
 
 export type WebviewToExtensionMessage =
@@ -88,4 +89,6 @@ export type WebviewToExtensionMessage =
 	| { type: "open-external-url"; url: string }
 	| { type: "open-file-link"; path: string; line?: number; column?: number }
 	| { type: "diag-log"; category: string; message: string; data: Record<string, unknown> | null; timestamp: number }
-	| { type: "onboarding-complete"; installHooks: boolean };
+	| { type: "onboarding-complete"; installHooks: boolean }
+	| { type: "open-image"; index: number }
+	| { type: "bind-image"; cliIndex: number; ptyId: number };
