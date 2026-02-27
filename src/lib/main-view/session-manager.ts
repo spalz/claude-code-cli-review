@@ -342,10 +342,6 @@ export class SessionManager {
 	}
 
 	dispose(): void {
-		if (this._namesDebounce) clearTimeout(this._namesDebounce);
-		if (this._jsonlDebounce) clearTimeout(this._jsonlDebounce);
-		this._namesDebounce = null;
-		this._jsonlDebounce = null;
 		this._namesWatcher?.close();
 		this._namesWatcher = null;
 	}

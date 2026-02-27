@@ -407,9 +407,9 @@ vscode-context-menu {
 	font-family: inherit;
 }
 .tab-inline-edit {
-	background: var(--vscode-input-background, #3c3c3c);
-	color: var(--fg);
-	border: 1px solid var(--accent);
+	background: transparent;
+	color: var(--accent-fg, #fff);
+	border: 1px solid rgba(255, 255, 255, 0.4);
 	border-radius: 2px;
 	padding: 1px 4px;
 	font-size: 12px;

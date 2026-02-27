@@ -399,10 +399,25 @@
 
 			case "lazy-session-ready": {
 				// Replace placeholder terminal entry with real PTY
-				var placeholder = getTerminals().get(msg.placeholderPtyId);
+				// Primary: find by claudeId (reliable — placeholder IDs are auto-generated)
+				var placeholder = null;
+				var placeholderKey = null;
+				if (msg.claudeId) {
+					getTerminals().forEach(function (t, tid) {
+						if (!placeholder && t.claudeId === msg.claudeId && t.lazy) {
+							placeholder = t;
+							placeholderKey = tid;
+						}
+					});
+				}
+				// Fallback: find by placeholderPtyId
+				if (!placeholder) {
+					placeholder = getTerminals().get(msg.placeholderPtyId);
+					placeholderKey = msg.placeholderPtyId;
+				}
 				if (placeholder) {
 					var terms = getTerminals();
-					terms.delete(msg.placeholderPtyId);
+					terms.delete(placeholderKey);
 					placeholder.id = msg.realPtyId;
 					placeholder.lazy = false;
 					placeholder.sessionRef.id = msg.realPtyId;
@@ -412,12 +427,12 @@
 					// Mark as loading — will scroll to bottom until output goes idle
 					placeholder.initialLoading = true;
 					// Update active ID if this was active
-					if (getActiveTerminalId() === msg.placeholderPtyId) {
+					if (getActiveTerminalId() === placeholderKey) {
 						// Re-activate with real ID
 						activateTerminal(msg.realPtyId);
 					}
 					diagLog("terminal", "lazy-ready", {
-						placeholder: msg.placeholderPtyId,
+						placeholder: placeholderKey,
 						real: msg.realPtyId,
 						claudeId: msg.claudeId,
 					});

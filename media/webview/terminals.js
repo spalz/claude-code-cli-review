@@ -1,7 +1,7 @@
 // Terminal management — xterm instances, tabs, paste, key handling
 // Depends on: core.js (send, switchMode, showTerminalView, showSessionsList), diag.js (diagLog, diagLogThrottled, getTermBufferState), sessions.js (findCachedSession, setActiveClaudeId)
 // Globals: Terminal, FitAddon, WebLinksAddon (loaded via <script> in HTML)
-// Exports: window.{getTerminals, getActiveTerminalId, addTerminal, removeTerminal, activateTerminal, fitActiveTerminal, renameTerminalTab, revertTabRename, syncTabNamesFromSessions, annotateFileLinks, closeErrorTerminal, reopenTerminal}
+// Exports: window.{getTerminals, getActiveTerminalId, addTerminal, removeTerminal, activateTerminal, fitActiveTerminal, renameTerminalTab, revertTabRename, syncTabNamesFromSessions, annotateFileLinks, closeErrorTerminal, reopenTerminal, startTabRename}
 (function () {
 	"use strict";
 
@@ -688,6 +688,10 @@
 		if (window.setActiveClaudeId) setActiveClaudeId(claudeIdVal);
 		send("set-active-session", { claudeId: claudeIdVal });
 		fitActiveTerminal("activateTerminal");
+		// Focus terminal so user can type immediately
+		if (entry && entry.term) {
+			setTimeout(function () { entry.term.focus(); }, 60);
+		}
 	}
 	window.activateTerminal = activateTerminal;
 
@@ -823,42 +827,29 @@
 		};
 	}
 
+	window.startTabRename = startTabRename;
+
 	// --- Tab context menu ---
 
 	function showTabCtxMenu(e, termId) {
 		e.preventDefault();
 		e.stopPropagation();
+		var t = terminals.get(termId);
 		var menu = document.getElementById("ctxMenu");
-		var html = "";
-		html += '<div class="ctx-menu-item" data-action="tab-rename">Rename</div>';
-		html += '<div class="ctx-menu-item" data-action="tab-reload">Reload</div>';
-		html += '<div class="ctx-menu-sep"></div>';
-		html += '<div class="ctx-menu-item danger" data-action="tab-close">Close session</div>';
-		menu.innerHTML = html;
-
-		var rect = document.body.getBoundingClientRect();
-		var x = e.clientX, y = e.clientY;
-		menu.style.display = "block";
-		if (x + menu.offsetWidth > rect.width) x = rect.width - menu.offsetWidth - 4;
-		if (y + menu.offsetHeight > rect.height) y = rect.height - menu.offsetHeight - 4;
-		menu.style.left = x + "px";
-		menu.style.top = y + "px";
-
-		menu.querySelectorAll(".ctx-menu-item").forEach(function (item) {
-			item.onclick = function (ev) {
-				ev.stopPropagation();
-				menu.style.display = "none";
-				var action = item.dataset.action;
-				if (action === "tab-rename") {
-					startTabRename(termId);
-				} else if (action === "tab-reload") {
-					reopenTerminal(termId);
-				} else if (action === "tab-close") {
-					var ct = terminals.get(termId);
-					send("close-terminal", { sessionId: termId, claudeId: ct ? ct.claudeId : null });
-				}
-			};
+		window.setCtxTarget({
+			sessionId: t ? t.claudeId : null,
+			title: t ? t.name : "",
+			termId: termId,
 		});
+		menu.data = [
+			{ label: "Rename", value: "rename" },
+			{ label: "Reload", value: "reload" },
+			{ separator: true },
+			{ label: "Close session", value: "close" },
+		];
+		menu.style.left = e.clientX + "px";
+		menu.style.top = e.clientY + "px";
+		menu.show = true;
 	}
 
 	// --- Paste interception ---

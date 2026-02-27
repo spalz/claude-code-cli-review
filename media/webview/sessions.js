@@ -178,9 +178,17 @@
 		var title = ctxTarget.title;
 
 		if (action === "rename") {
-			startInlineRename(sessionId, title);
+			if (ctxTarget.termId != null) {
+				window.startTabRename(ctxTarget.termId);
+			} else {
+				startInlineRename(sessionId, title);
+			}
 		} else if (action === "close") {
 			send("close-session-by-claude-id", { claudeSessionId: sessionId });
+		} else if (action === "reload") {
+			if (ctxTarget.termId != null) {
+				reopenTerminal(ctxTarget.termId);
+			}
 		} else if (action === "archive") {
 			send("archive-session", { sessionId: sessionId });
 		} else if (action === "unarchive") {
@@ -199,6 +207,11 @@
 			});
 		}
 	}
+
+	/** Set ctxTarget from external modules (e.g., terminals.js tab context menu) */
+	window.setCtxTarget = function (target) {
+		ctxTarget = target;
+	};
 
 	// --- Inline rename ---
 
