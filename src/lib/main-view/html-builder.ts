@@ -1,29 +1,29 @@
 import * as vscode from "vscode";
 
 export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
-	const mediaUri = (file: string): vscode.Uri =>
-		webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", file));
-	const webviewUri = (file: string): vscode.Uri =>
-		webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "webview", file));
-	const codiconUri = webview.asWebviewUri(
-		vscode.Uri.joinPath(vscode.Uri.file(vscode.env.appRoot), "out", "media", "codicon.ttf"),
-	);
+    const mediaUri = (file: string): vscode.Uri =>
+        webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", file));
+    const webviewUri = (file: string): vscode.Uri =>
+        webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "webview", file));
+    const codiconUri = webview.asWebviewUri(
+        vscode.Uri.joinPath(vscode.Uri.file(vscode.env.appRoot), "out", "media", "codicon.ttf"),
+    );
 
-	const xtermCss = mediaUri("xterm.css");
-	const xtermJs = mediaUri("xterm.min.js");
-	const fitJs = mediaUri("addon-fit.min.js");
-	const webLinksJs = mediaUri("xterm-addon-web-links.js");
-	const veJs = mediaUri("vscode-elements.js");
-	const stylesCss = webviewUri("styles.css");
-	const coreJs = webviewUri("core.js");
-	const diagJs = webviewUri("diag.js");
-	const sessionsJs = webviewUri("sessions.js");
-	const terminalsJs = webviewUri("terminals.js");
-	const reviewJs = webviewUri("review.js");
-	const settingsJs = webviewUri("settings.js");
-	const messageRouterJs = webviewUri("message-router.js");
+    const xtermCss = mediaUri("xterm.css");
+    const xtermJs = mediaUri("xterm.min.js");
+    const fitJs = mediaUri("addon-fit.min.js");
+    const webLinksJs = mediaUri("xterm-addon-web-links.js");
+    const veJs = mediaUri("vscode-elements.js");
+    const stylesCss = webviewUri("styles.css");
+    const coreJs = webviewUri("core.js");
+    const diagJs = webviewUri("diag.js");
+    const sessionsJs = webviewUri("sessions.js");
+    const terminalsJs = webviewUri("terminals.js");
+    const reviewJs = webviewUri("review.js");
+    const settingsJs = webviewUri("settings.js");
+    const messageRouterJs = webviewUri("message-router.js");
 
-	return `<!DOCTYPE html>
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -104,13 +104,8 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
         <vscode-button id="hookActionBtn" style="display:none">Install</vscode-button>
       </div>
       <div class="settings-row">
-        <span class="label">Notifications</span>
-        <vscode-single-select id="ts_notificationMode">
-          <vscode-option value="notifications_sound">Notifications + Sound</vscode-option>
-          <vscode-option value="sound_only">Sound only</vscode-option>
-          <vscode-option value="notifications_only">Notifications only</vscode-option>
-          <vscode-option value="disabled">Disabled</vscode-option>
-        </vscode-single-select>
+        <span class="label">Notification sound</span>
+        <vscode-checkbox id="ts_soundEnabled"></vscode-checkbox>
       </div>
     </div>
     <div class="settings-section">

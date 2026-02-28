@@ -2,7 +2,7 @@
 import { HOOK_VERSION } from "./constants";
 
 export function getPostHookScript(): string {
-	return `#!/usr/bin/env bash
+    return `#!/usr/bin/env bash
 # Claude Code Review — PostToolUse hook v${HOOK_VERSION}
 # Managed by Claude Code Review extension. Do not edit manually.
 
@@ -62,7 +62,7 @@ exit 0
 }
 
 export function getPreHookScript(): string {
-	return `#!/usr/bin/env bash
+    return `#!/usr/bin/env bash
 # Claude Code Review — PreToolUse hook v${HOOK_VERSION}
 # Managed by Claude Code Review extension. Do not edit manually.
 # Captures file content BEFORE Claude modifies it.
@@ -128,7 +128,7 @@ exit 0
 }
 
 export function getNotifyHookScript(): string {
-	return `#!/usr/bin/env bash
+    return `#!/usr/bin/env bash
 # Claude Code Review — Notification hook v${HOOK_VERSION}
 # Managed by Claude Code Review extension. Do not edit manually.
 # Forwards notifications to the extension server which decides whether to show OS alerts.

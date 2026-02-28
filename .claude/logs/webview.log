@@ -1,2 +1,7 @@
 [2026-02-24T14:38:01.455Z] [scroll-diag] ResizeObserver {"area":{"w":0,"h":0},"toolbar":{"display":"none","h":0},"buf":null}
 [2026-02-24T14:38:01.486Z] [session] renderSessions {"count":30}
+[2026-02-27T13:22:05.936Z] [scroll-diag] ResizeObserver {"area":{"w":0,"h":0},"toolbar":{"display":"none","h":0},"buf":null}
+[2026-02-27T13:22:05.936Z] [session] renderSessions {"count":30}
+[2026-02-27T13:26:44.903Z] [scroll-diag] toolbar-LAYOUT {"before":{"toolbarDisplay":"","toolbarH":30,"areaH":0},"after":{"toolbarDisplay":"","toolbarH":32,"areaH":0}}
+[2026-02-27T13:26:49.377Z] [scroll-diag] toolbar-LAYOUT {"before":{"toolbarDisplay":"","toolbarH":30,"areaH":0},"after":{"toolbarDisplay":"","toolbarH":32,"areaH":0}}
+[2026-02-27T13:26:53.030Z] [scroll-diag] toolbar-LAYOUT {"before":{"toolbarDisplay":"","toolbarH":30,"areaH":0},"after":{"toolbarDisplay":"","toolbarH":32,"areaH":0}}

@@ -10,135 +10,137 @@ import { handleWebviewMessage, ImageTracker } from "./message-handler";
 import { buildStateUpdate, getKeybindings } from "./state-updater";
 
 export class MainViewProvider implements vscode.WebviewViewProvider {
-	static readonly viewType = "claudeCodeReview.mainView";
+    static readonly viewType = "claudeCodeReview.mainView";
 
-	private _view: vscode.WebviewView | null = null;
-	private _webviewReady = false;
-	private _pendingHookStatus: HookStatus | null = null;
-	private readonly _sessionMgr: SessionManager;
-	private _reviewManager: ReviewManager | undefined;
-	private readonly _workspaceState: vscode.Memento | undefined;
-	private readonly _imageTracker = new ImageTracker();
+    private _view: vscode.WebviewView | null = null;
+    private _webviewReady = false;
+    private _pendingHookStatus: HookStatus | null = null;
+    private readonly _sessionMgr: SessionManager;
+    private _reviewManager: ReviewManager | undefined;
+    private readonly _workspaceState: vscode.Memento | undefined;
+    private readonly _imageTracker = new ImageTracker();
 
-	constructor(
-		private readonly _wp: string,
-		private readonly _extensionUri: vscode.Uri,
-		private readonly _ptyManager: PtyManager,
-		workspaceState: vscode.Memento | undefined,
-	) {
-		this._workspaceState = workspaceState;
-		this._sessionMgr = new SessionManager(_wp, _ptyManager, workspaceState, (msg) =>
-			this._postMessage(msg),
-		);
-		this._sessionMgr.watchSessionNames();
-	}
+    constructor(
+        private readonly _wp: string,
+        private readonly _extensionUri: vscode.Uri,
+        private readonly _ptyManager: PtyManager,
+        workspaceState: vscode.Memento | undefined,
+    ) {
+        this._workspaceState = workspaceState;
+        this._sessionMgr = new SessionManager(_wp, _ptyManager, workspaceState, (msg) =>
+            this._postMessage(msg),
+        );
+        this._sessionMgr.watchSessionNames();
+    }
 
-	dispose(): void {
-		this._sessionMgr.dispose();
-	}
+    dispose(): void {
+        this._sessionMgr.dispose();
+    }
 
-	setReviewManager(rm: ReviewManager): void {
-		this._reviewManager = rm;
-	}
+    setReviewManager(rm: ReviewManager): void {
+        this._reviewManager = rm;
+    }
 
-	resolveWebviewView(webviewView: vscode.WebviewView): void {
-		log.log("webview resolved");
-		this._view = webviewView;
+    resolveWebviewView(webviewView: vscode.WebviewView): void {
+        log.log("webview resolved");
+        this._view = webviewView;
 
-		webviewView.webview.options = {
-			enableScripts: true,
-			localResourceRoots: [this._extensionUri, vscode.Uri.file(vscode.env.appRoot)],
-		};
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [this._extensionUri, vscode.Uri.file(vscode.env.appRoot)],
+        };
 
-		webviewView.webview.html = buildWebviewHtml(webviewView.webview, this._extensionUri);
+        webviewView.webview.html = buildWebviewHtml(webviewView.webview, this._extensionUri);
 
-		webviewView.webview.onDidReceiveMessage((msg: Record<string, unknown>) => {
-			const result = handleWebviewMessage(msg, {
-				sessionMgr: this._sessionMgr,
-				ptyManager: this._ptyManager,
-				wp: this._wp,
-				postMessage: (m) => this._postMessage(m),
-				getKeybindings,
-				webviewReady: this._webviewReady,
-				pendingHookStatus: this._pendingHookStatus,
-				workspaceState: this._workspaceState,
-				imageTracker: this._imageTracker,
-			});
-			this._webviewReady = result.webviewReady;
-			this._pendingHookStatus = result.pendingHookStatus;
-		});
-	}
+        webviewView.webview.onDidReceiveMessage((msg: Record<string, unknown>) => {
+            const result = handleWebviewMessage(msg, {
+                sessionMgr: this._sessionMgr,
+                ptyManager: this._ptyManager,
+                wp: this._wp,
+                postMessage: (m) => this._postMessage(m),
+                getKeybindings,
+                webviewReady: this._webviewReady,
+                pendingHookStatus: this._pendingHookStatus,
+                workspaceState: this._workspaceState,
+                imageTracker: this._imageTracker,
+            });
+            this._webviewReady = result.webviewReady;
+            this._pendingHookStatus = result.pendingHookStatus;
+        });
+    }
 
-	refreshClaudeSessions(): void {
-		this._sessionMgr.refreshClaudeSessions();
-	}
+    refreshClaudeSessions(): void {
+        this._sessionMgr.refreshClaudeSessions();
+    }
 
-	startNewClaudeSession(resumeId?: string): void {
-		this._sessionMgr.startNewClaudeSession(resumeId);
-	}
+    startNewClaudeSession(resumeId?: string): void {
+        this._sessionMgr.startNewClaudeSession(resumeId);
+    }
 
-	removeOpenSession(ptySessionId: number): void {
-		this._sessionMgr.removeOpenSession(ptySessionId);
-	}
+    removeOpenSession(ptySessionId: number): void {
+        this._sessionMgr.removeOpenSession(ptySessionId);
+    }
 
-	sendHookStatus(status: HookStatus): void {
-		log.log(`sendHookStatus: ${status}, webviewReady=${this._webviewReady}`);
-		if (this._webviewReady) {
-			this._postMessage({ type: "hook-status", status });
-		} else {
-			this._pendingHookStatus = status;
-		}
-	}
+    sendHookStatus(status: HookStatus): void {
+        log.log(`sendHookStatus: ${status}, webviewReady=${this._webviewReady}`);
+        if (this._webviewReady) {
+            this._postMessage({ type: "hook-status", status });
+        } else {
+            this._pendingHookStatus = status;
+        }
+    }
 
-	sendSelectionToTerminal(text: string): void {
-		this._postMessage({ type: "insert-text", text });
-	}
+    sendSelectionToTerminal(text: string): void {
+        this._postMessage({ type: "insert-text", text });
+    }
 
-	sendTerminalOutput(sessionId: number, data: string): void {
-		const plain = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
-		if (plain.includes("No conversation found")) {
-			log.log(`Terminal error detected: session=${sessionId}, "No conversation found"`);
-			const claudeId = this._sessionMgr.getPtyToClaudeId().get(sessionId);
-			if (claudeId) {
-				archiveSession(this._wp, claudeId);
-			}
-			this._postMessage({
-				type: "terminal-error",
-				sessionId,
-				error: "session-not-found",
-			});
-		}
-		this._postMessage({ type: "terminal-output", sessionId, data });
-	}
+    sendTerminalOutput(sessionId: number, data: string): void {
+        const plain = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+        if (plain.includes("No conversation found")) {
+            log.log(`Terminal error detected: session=${sessionId}, "No conversation found"`);
+            const claudeId = this._sessionMgr.getPtyToClaudeId().get(sessionId);
+            if (claudeId) {
+                archiveSession(this._wp, claudeId);
+            }
+            this._postMessage({
+                type: "terminal-error",
+                sessionId,
+                error: "session-not-found",
+            });
+        }
+        this._postMessage({ type: "terminal-output", sessionId, data });
+    }
 
-	sendTerminalExit(sessionId: number, code: number): void {
-		this._postMessage({
-			type: "terminal-exit",
-			sessionId,
-			exitCode: code,
-		});
-	}
+    sendTerminalExit(sessionId: number, code: number): void {
+        this._postMessage({
+            type: "terminal-exit",
+            sessionId,
+            exitCode: code,
+        });
+    }
 
-	update(): void {
-		this._sendStateUpdate();
-	}
+    update(): void {
+        this._sendStateUpdate();
+    }
 
-	postMessageDirect(msg: ExtensionToWebviewMessage): void {
-		this._postMessage(msg);
-	}
+    postMessageDirect(msg: ExtensionToWebviewMessage): void {
+        this._postMessage(msg);
+    }
 
-	private _sendStateUpdate(): void {
-		const t0 = performance.now();
-		const payload = buildStateUpdate(this._wp, this._ptyManager, this._reviewManager);
-		this._postMessage({
-			type: "state-update",
-			review: payload.review,
-			activeSessions: payload.activeSessions,
-		});
-		log.log(`MainView.stateUpdate: remaining=${payload.review.remaining}/${payload.review.total}, hunks=${payload.review.unresolvedHunks}/${payload.review.totalHunks}, activeInReview=${payload.review.activeEditorInReview}, ${(performance.now() - t0).toFixed(1)}ms`);
-	}
+    private _sendStateUpdate(): void {
+        const t0 = performance.now();
+        const payload = buildStateUpdate(this._wp, this._ptyManager, this._reviewManager);
+        this._postMessage({
+            type: "state-update",
+            review: payload.review,
+            activeSessions: payload.activeSessions,
+        });
+        log.log(
+            `MainView.stateUpdate: remaining=${payload.review.remaining}/${payload.review.total}, hunks=${payload.review.unresolvedHunks}/${payload.review.totalHunks}, activeInReview=${payload.review.activeEditorInReview}, ${(performance.now() - t0).toFixed(1)}ms`,
+        );
+    }
 
-	private _postMessage(msg: ExtensionToWebviewMessage): void {
-		this._view?.webview?.postMessage(msg);
-	}
+    private _postMessage(msg: ExtensionToWebviewMessage): void {
+        this._view?.webview?.postMessage(msg);
+    }
 }

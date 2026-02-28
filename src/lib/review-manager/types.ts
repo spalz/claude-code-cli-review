@@ -2,11 +2,11 @@
 import type * as vscode from "vscode";
 
 export interface ICodeLensProvider {
-	refresh(): void;
+    refresh(): void;
 }
 
 export interface IMainView {
-	update(): void;
+    update(): void;
 }
 
 /**
@@ -14,17 +14,17 @@ export interface IMainView {
  * Helper functions accept `ReviewManagerInternal` instead of accessing private members directly.
  */
 export interface ReviewManagerInternal {
-	readonly wp: string;
-	reviewFiles: string[];
-	currentFileIndex: number;
-	currentHunkIndex: number;
-	codeLens: ICodeLensProvider | null;
-	mainView: IMainView | null;
-	persistTimer: NodeJS.Timeout | null;
-	readonly _onReviewStateChange: vscode.EventEmitter<boolean>;
+    readonly wp: string;
+    reviewFiles: string[];
+    currentFileIndex: number;
+    currentHunkIndex: number;
+    codeLens: ICodeLensProvider | null;
+    mainView: IMainView | null;
+    persistTimer: NodeJS.Timeout | null;
+    readonly _onReviewStateChange: vscode.EventEmitter<boolean>;
 
-	syncState(): void;
-	refreshUI(): void;
-	scheduleSave(): void;
-	openFileForReview(filePath: string): Promise<void>;
+    syncState(): void;
+    refreshUI(): void;
+    scheduleSave(): void;
+    openFileForReview(filePath: string): Promise<void>;
 }

@@ -8,50 +8,50 @@ import { workspace } from "vscode";
 import { clearHistory } from "../undo-history";
 
 describe("registerDocumentListener", () => {
-	let context: { subscriptions: { dispose: () => void }[] };
+    let context: { subscriptions: { dispose: () => void }[] };
 
-	beforeEach(() => {
-		vi.clearAllMocks();
-		context = { subscriptions: [] };
-	});
+    beforeEach(() => {
+        vi.clearAllMocks();
+        context = { subscriptions: [] };
+    });
 
-	it("returns a Disposable", () => {
-		const result = registerDocumentListener(context as any);
-		expect(result).toBeDefined();
-		expect(typeof result.dispose).toBe("function");
-	});
+    it("returns a Disposable", () => {
+        const result = registerDocumentListener(context as any);
+        expect(result).toBeDefined();
+        expect(typeof result.dispose).toBe("function");
+    });
 
-	it("pushes disposable to context.subscriptions", () => {
-		registerDocumentListener(context as any);
-		expect(context.subscriptions.length).toBe(1);
-	});
+    it("pushes disposable to context.subscriptions", () => {
+        registerDocumentListener(context as any);
+        expect(context.subscriptions.length).toBe(1);
+    });
 
-	it("registers onDidCloseTextDocument listener", () => {
-		registerDocumentListener(context as any);
-		expect(workspace.onDidCloseTextDocument).toHaveBeenCalledOnce();
-	});
+    it("registers onDidCloseTextDocument listener", () => {
+        registerDocumentListener(context as any);
+        expect(workspace.onDidCloseTextDocument).toHaveBeenCalledOnce();
+    });
 
-	it("calls clearHistory with fsPath when document is closed", () => {
-		// Capture the callback passed to onDidCloseTextDocument
-		let callback: (doc: any) => void;
-		vi.mocked(workspace.onDidCloseTextDocument).mockImplementation((cb: any) => {
-			callback = cb;
-			return { dispose: vi.fn() };
-		});
+    it("calls clearHistory with fsPath when document is closed", () => {
+        // Capture the callback passed to onDidCloseTextDocument
+        let callback: (doc: any) => void;
+        vi.mocked(workspace.onDidCloseTextDocument).mockImplementation((cb: any) => {
+            callback = cb;
+            return { dispose: vi.fn() };
+        });
 
-		registerDocumentListener(context as any);
-		callback!({ uri: { fsPath: "/some/file.ts" } });
+        registerDocumentListener(context as any);
+        callback!({ uri: { fsPath: "/some/file.ts" } });
 
-		expect(clearHistory).toHaveBeenCalledWith("/some/file.ts");
-	});
+        expect(clearHistory).toHaveBeenCalledWith("/some/file.ts");
+    });
 
-	it("dispose cleans up the listener", () => {
-		const disposeFn = vi.fn();
-		vi.mocked(workspace.onDidCloseTextDocument).mockReturnValue({ dispose: disposeFn });
+    it("dispose cleans up the listener", () => {
+        const disposeFn = vi.fn();
+        vi.mocked(workspace.onDidCloseTextDocument).mockReturnValue({ dispose: disposeFn });
 
-		const result = registerDocumentListener(context as any);
-		result.dispose();
+        const result = registerDocumentListener(context as any);
+        result.dispose();
 
-		expect(disposeFn).toHaveBeenCalled();
-	});
+        expect(disposeFn).toHaveBeenCalled();
+    });
 });

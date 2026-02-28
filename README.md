@@ -66,14 +66,14 @@ Configure Claude CLI without touching JSON files. The settings panel lets you ad
 
 ## Keyboard Shortcuts
 
-| Shortcut | Action |
-|---|---|
-| `Ctrl+Alt+B` | Toggle sidebar panel |
-| `Alt+K` | Send selection to Claude session |
-| `Cmd+Y` | Keep (accept) current change |
-| `Cmd+N` | Undo (reject) current change |
-| `Cmd+]` / `Cmd+[` | Next / previous change |
-| `Cmd+Z` / `Cmd+Shift+Z` | Undo / redo review action |
+| Shortcut                | Action                           |
+| ----------------------- | -------------------------------- |
+| `Ctrl+Alt+B`            | Toggle sidebar panel             |
+| `Alt+K`                 | Send selection to Claude session |
+| `Cmd+Y`                 | Keep (accept) current change     |
+| `Cmd+N`                 | Undo (reject) current change     |
+| `Cmd+]` / `Cmd+[`       | Next / previous change           |
+| `Cmd+Z` / `Cmd+Shift+Z` | Undo / redo review action        |
 
 All commands available via Command Palette under **Claude Code Review:**.
 

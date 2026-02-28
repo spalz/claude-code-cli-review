@@ -30,6 +30,7 @@ npx @vscode/vsce package -o claude-code-review-$(node -p "require('./package.jso
 ```
 
 Для установки в Cursor (нет автодеплоя):
+
 ```bash
 cp -r . ~/.cursor/extensions/local.claude-code-review-$(node -p "require('./package.json').version")/
 ```
@@ -41,6 +42,7 @@ node scripts/publish.js <patch|minor|major>
 ```
 
 Требует `.env` файл:
+
 ```
 dev_azure_access_token=<token>
 open_vsx_registry_access_token=<token>

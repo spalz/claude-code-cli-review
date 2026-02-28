@@ -1,290 +1,283 @@
 {
-	"name": "claude-code-review",
-	"displayName": "Claude Code with Review",
-	"description": "Claude Code session manager, code review, and statistics — opens in the right sidebar",
-	"version": "0.5.0",
-	"publisher": "DangerCactus",
-	"icon": "media/icon.png",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/spalz/claude-code-cli-review"
-	},
-	"homepage": "https://github.com/spalz/claude-code-cli-review",
-	"bugs": {
-		"url": "https://github.com/spalz/claude-code-cli-review/issues"
-	},
-	"keywords": [
-		"claude",
-		"ai",
-		"code-review",
-		"diff",
-		"anthropic",
-		"claude-code",
-		"llm"
-	],
-	"galleryBanner": {
-		"color": "#1A1A2E",
-		"theme": "dark"
-	},
-	"engines": {
-		"vscode": "^1.100.0"
-	},
-	"categories": [
-		"AI",
-		"Other"
-	],
-	"activationEvents": [
-		"onStartupFinished"
-	],
-	"main": "./dist/extension.js",
-	"scripts": {
-		"build": "node esbuild.js && node scripts/deploy.js",
-		"build:prod": "node esbuild.js --production && node scripts/deploy.js",
-		"watch": "node esbuild.js --watch",
-		"typecheck": "tsc --noEmit",
-		"lint": "eslint src/ media/webview/",
-		"lint:fix": "eslint src/ media/webview/ --fix",
-		"format": "prettier --write \"src/**/*.ts\" \"media/webview/**/*.{js,css}\" \"*.{json,md,mjs}\"",
-		"format:check": "prettier --check \"src/**/*.ts\" \"media/webview/**/*.{js,css}\" \"*.{json,md,mjs}\"",
-		"deploy": "node scripts/deploy.js",
-		"dev": "node esbuild.js --watch --deploy",
-		"vscode:prepublish": "npm run build:prod",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"test:coverage": "vitest run --coverage",
-		"publish:ext": "node scripts/publish.js"
-	},
-	"contributes": {
-		"commands": [
-			{
-				"command": "ccr.togglePanel",
-				"title": "Claude Code Review: Toggle Panel"
-			},
-			{
-				"command": "ccr.openReview",
-				"title": "Claude Code Review: Start Review",
-				"icon": "$(diff)"
-			},
-			{
-				"command": "ccr.acceptAll",
-				"title": "Claude Code Review: Keep All Changes"
-			},
-			{
-				"command": "ccr.rejectAll",
-				"title": "Claude Code Review: Undo All Changes"
-			},
-			{
-				"command": "ccr.dismissAll",
-				"title": "Claude Code Review: Dismiss All Reviews"
-			},
-			{
-				"command": "ccr.acceptFile",
-				"title": "Keep File"
-			},
-			{
-				"command": "ccr.rejectFile",
-				"title": "Undo File"
-			},
-			{
-				"command": "ccr.openFileDiff",
-				"title": "Open Review"
-			},
-			{
-				"command": "ccr.acceptHunk",
-				"title": "Keep Change"
-			},
-			{
-				"command": "ccr.rejectHunk",
-				"title": "Undo Change"
-			},
-			{
-				"command": "ccr.newSession",
-				"title": "Claude Code Review: New Claude Session"
-			},
-			{
-				"command": "ccr.refreshSessions",
-				"title": "Claude Code Review: Refresh Sessions"
-			},
-			{
-				"command": "ccr.sendSelection",
-				"title": "Claude Code Review: Send Selection to Session"
-			},
-			{
-				"command": "ccr.prevFile",
-				"title": "Claude Code Review: Previous File"
-			},
-			{
-				"command": "ccr.nextFile",
-				"title": "Claude Code Review: Next File"
-			},
-			{
-				"command": "ccr.installHook",
-				"title": "Claude Code Review: Install Hook"
-			},
-			{
-				"command": "ccr.prevHunk",
-				"title": "Claude Code Review: Previous Change"
-			},
-			{
-				"command": "ccr.nextHunk",
-				"title": "Claude Code Review: Next Change"
-			},
-			{
-				"command": "ccr.keepCurrentFile",
-				"title": "Claude Code Review: Keep Current File"
-			},
-			{
-				"command": "ccr.undoCurrentFile",
-				"title": "Claude Code Review: Undo Current File"
-			},
-			{
-				"command": "ccr.reviewNextUnresolved",
-				"title": "Claude Code Review: Review Next File"
-			},
-			{
-				"command": "ccr.sendFileToSession",
-				"title": "Send to Claude Session"
-			},
-			{
-				"command": "ccr.undo",
-				"title": "Claude Code Review: Undo Last Review Action"
-			},
-			{
-				"command": "ccr.redo",
-				"title": "Claude Code Review: Redo Review Action"
-			}
-		],
-		"menus": {
-			"editor/context": [
-				{
-					"command": "ccr.sendSelection",
-					"when": "editorTextFocus",
-					"group": "9_cutcopypaste@99"
-				}
-			],
-			"explorer/context": [
-				{
-					"command": "ccr.sendFileToSession",
-					"group": "9_cutcopypaste@99"
-				}
-			]
-		},
-		"viewsContainers": {
-			"activitybar": [
-				{
-					"id": "ccr",
-					"title": "Claude Code Review",
-					"icon": "media/claude-icon-dark.svg"
-				}
-			]
-		},
-		"views": {
-			"ccr": [
-				{
-					"id": "ccr.main",
-					"name": "Claude Code Review",
-					"type": "webview"
-				}
-			]
-		},
-		"keybindings": [
-			{
-				"command": "ccr.togglePanel",
-				"key": "ctrl+alt+b",
-				"mac": "alt+ctrl+b"
-			},
-			{
-				"command": "ccr.sendSelection",
-				"key": "alt+k",
-				"mac": "alt+k",
-				"when": "editorTextFocus"
-			},
-			{
-				"command": "ccr.acceptHunk",
-				"key": "cmd+y",
-				"when": "ccr.reviewActive && editorFocus"
-			},
-			{
-				"command": "ccr.rejectHunk",
-				"key": "cmd+n",
-				"when": "ccr.reviewActive && editorFocus"
-			},
-			{
-				"command": "ccr.nextHunk",
-				"key": "cmd+]",
-				"when": "ccr.reviewActive"
-			},
-			{
-				"command": "ccr.prevHunk",
-				"key": "cmd+[",
-				"when": "ccr.reviewActive"
-			},
-			{
-				"command": "ccr.undo",
-				"key": "cmd+z",
-				"when": "ccr.canUndoReview && ccr.activeFileInReview && editorTextFocus"
-			},
-			{
-				"command": "ccr.redo",
-				"key": "cmd+shift+z",
-				"when": "ccr.canRedoReview && ccr.activeFileInReview && editorTextFocus"
-			}
-		],
-		"configuration": {
-			"title": "Claude Code Review",
-			"properties": {
-				"claudeCodeReview.cliCommand": {
-					"type": "string",
-					"default": "claude",
-					"enum": [
-						"claude",
-						"happy"
-					],
-					"enumDescriptions": [
-						"Use 'claude' CLI (default)",
-						"Use 'happy' wrapper CLI"
-					],
-					"description": "CLI command for Claude sessions",
-					"scope": "window"
-				},
-				"claudeCodeReview.notificationMode": {
-					"type": "string",
-					"default": "notifications_sound",
-					"enum": ["notifications_sound", "sound_only", "notifications_only", "disabled"],
-					"enumDescriptions": [
-						"OS notifications and sound alert",
-						"Sound alert only",
-						"OS notifications only",
-						"Disabled"
-					],
-					"description": "How to alert when Claude needs attention and editor is unfocused",
-					"scope": "window"
-				},
-				"claudeCodeReview.extraEnvVars": {
-					"type": "object",
-					"default": {},
-					"description": "Extra env vars (key-value) added to Claude sessions.",
-					"scope": "window"
-				}
-			}
-		}
-	},
-	"devDependencies": {
-		"@types/node": "^25.3.0",
-		"@types/vscode": "^1.100.0",
-		"@typescript-eslint/eslint-plugin": "^8.56.0",
-		"@typescript-eslint/parser": "^8.56.0",
-		"@vitest/coverage-v8": "^4.0.18",
-		"esbuild": "^0.27.3",
-		"eslint": "^10.0.1",
-		"eslint-config-prettier": "^10.1.8",
-		"eslint-plugin-prettier": "^5.5.5",
-		"prettier": "^3.8.1",
-		"typescript": "^5.9.3",
-		"vitest": "^4.0.18"
-	},
-	"dependencies": {
-		"@vscode-elements/elements": "^2.5.1"
-	}
+    "name": "claude-code-review",
+    "displayName": "Claude Code with Review",
+    "description": "Claude Code session manager, code review, and statistics — opens in the right sidebar",
+    "version": "0.5.0",
+    "publisher": "DangerCactus",
+    "icon": "media/icon.png",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/spalz/claude-code-cli-review"
+    },
+    "homepage": "https://github.com/spalz/claude-code-cli-review",
+    "bugs": {
+        "url": "https://github.com/spalz/claude-code-cli-review/issues"
+    },
+    "keywords": [
+        "claude",
+        "ai",
+        "code-review",
+        "diff",
+        "anthropic",
+        "claude-code",
+        "llm"
+    ],
+    "galleryBanner": {
+        "color": "#1A1A2E",
+        "theme": "dark"
+    },
+    "engines": {
+        "vscode": "^1.100.0"
+    },
+    "categories": [
+        "AI",
+        "Other"
+    ],
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "main": "./dist/extension.js",
+    "scripts": {
+        "build": "node esbuild.js && node scripts/deploy.js",
+        "build:prod": "node esbuild.js --production && node scripts/deploy.js",
+        "watch": "node esbuild.js --watch",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint src/ media/webview/",
+        "lint:fix": "eslint src/ media/webview/ --fix",
+        "format": "prettier --write \"src/**/*.ts\" \"media/webview/**/*.{js,css}\" \"*.{json,md,mjs}\"",
+        "format:check": "prettier --check \"src/**/*.ts\" \"media/webview/**/*.{js,css}\" \"*.{json,md,mjs}\"",
+        "deploy": "node scripts/deploy.js",
+        "dev": "node esbuild.js --watch --deploy",
+        "vscode:prepublish": "npm run build:prod",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage",
+        "publish:ext": "node scripts/publish.js"
+    },
+    "contributes": {
+        "commands": [
+            {
+                "command": "ccr.togglePanel",
+                "title": "Claude Code Review: Toggle Panel"
+            },
+            {
+                "command": "ccr.openReview",
+                "title": "Claude Code Review: Start Review",
+                "icon": "$(diff)"
+            },
+            {
+                "command": "ccr.acceptAll",
+                "title": "Claude Code Review: Keep All Changes"
+            },
+            {
+                "command": "ccr.rejectAll",
+                "title": "Claude Code Review: Undo All Changes"
+            },
+            {
+                "command": "ccr.dismissAll",
+                "title": "Claude Code Review: Dismiss All Reviews"
+            },
+            {
+                "command": "ccr.acceptFile",
+                "title": "Keep File"
+            },
+            {
+                "command": "ccr.rejectFile",
+                "title": "Undo File"
+            },
+            {
+                "command": "ccr.openFileDiff",
+                "title": "Open Review"
+            },
+            {
+                "command": "ccr.acceptHunk",
+                "title": "Keep Change"
+            },
+            {
+                "command": "ccr.rejectHunk",
+                "title": "Undo Change"
+            },
+            {
+                "command": "ccr.newSession",
+                "title": "Claude Code Review: New Claude Session"
+            },
+            {
+                "command": "ccr.refreshSessions",
+                "title": "Claude Code Review: Refresh Sessions"
+            },
+            {
+                "command": "ccr.sendSelection",
+                "title": "Claude Code Review: Send Selection to Session"
+            },
+            {
+                "command": "ccr.prevFile",
+                "title": "Claude Code Review: Previous File"
+            },
+            {
+                "command": "ccr.nextFile",
+                "title": "Claude Code Review: Next File"
+            },
+            {
+                "command": "ccr.installHook",
+                "title": "Claude Code Review: Install Hook"
+            },
+            {
+                "command": "ccr.prevHunk",
+                "title": "Claude Code Review: Previous Change"
+            },
+            {
+                "command": "ccr.nextHunk",
+                "title": "Claude Code Review: Next Change"
+            },
+            {
+                "command": "ccr.keepCurrentFile",
+                "title": "Claude Code Review: Keep Current File"
+            },
+            {
+                "command": "ccr.undoCurrentFile",
+                "title": "Claude Code Review: Undo Current File"
+            },
+            {
+                "command": "ccr.reviewNextUnresolved",
+                "title": "Claude Code Review: Review Next File"
+            },
+            {
+                "command": "ccr.sendFileToSession",
+                "title": "Send to Claude Session"
+            },
+            {
+                "command": "ccr.undo",
+                "title": "Claude Code Review: Undo Last Review Action"
+            },
+            {
+                "command": "ccr.redo",
+                "title": "Claude Code Review: Redo Review Action"
+            }
+        ],
+        "menus": {
+            "editor/context": [
+                {
+                    "command": "ccr.sendSelection",
+                    "when": "editorTextFocus",
+                    "group": "9_cutcopypaste@99"
+                }
+            ],
+            "explorer/context": [
+                {
+                    "command": "ccr.sendFileToSession",
+                    "group": "9_cutcopypaste@99"
+                }
+            ]
+        },
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "ccr",
+                    "title": "Claude Code Review",
+                    "icon": "media/claude-icon-dark.svg"
+                }
+            ]
+        },
+        "views": {
+            "ccr": [
+                {
+                    "id": "ccr.main",
+                    "name": "Claude Code Review",
+                    "type": "webview"
+                }
+            ]
+        },
+        "keybindings": [
+            {
+                "command": "ccr.togglePanel",
+                "key": "ctrl+alt+b",
+                "mac": "alt+ctrl+b"
+            },
+            {
+                "command": "ccr.sendSelection",
+                "key": "alt+k",
+                "mac": "alt+k",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "ccr.acceptHunk",
+                "key": "cmd+y",
+                "when": "ccr.reviewActive && editorFocus"
+            },
+            {
+                "command": "ccr.rejectHunk",
+                "key": "cmd+n",
+                "when": "ccr.reviewActive && editorFocus"
+            },
+            {
+                "command": "ccr.nextHunk",
+                "key": "cmd+]",
+                "when": "ccr.reviewActive"
+            },
+            {
+                "command": "ccr.prevHunk",
+                "key": "cmd+[",
+                "when": "ccr.reviewActive"
+            },
+            {
+                "command": "ccr.undo",
+                "key": "cmd+z",
+                "when": "ccr.canUndoReview && ccr.activeFileInReview && editorTextFocus"
+            },
+            {
+                "command": "ccr.redo",
+                "key": "cmd+shift+z",
+                "when": "ccr.canRedoReview && ccr.activeFileInReview && editorTextFocus"
+            }
+        ],
+        "configuration": {
+            "title": "Claude Code Review",
+            "properties": {
+                "claudeCodeReview.cliCommand": {
+                    "type": "string",
+                    "default": "claude",
+                    "enum": [
+                        "claude",
+                        "happy"
+                    ],
+                    "enumDescriptions": [
+                        "Use 'claude' CLI (default)",
+                        "Use 'happy' wrapper CLI"
+                    ],
+                    "description": "CLI command for Claude sessions",
+                    "scope": "window"
+                },
+                "claudeCodeReview.extraEnvVars": {
+                    "type": "object",
+                    "default": {},
+                    "description": "Extra env vars (key-value) added to Claude sessions.",
+                    "scope": "window"
+                },
+                "claudeCodeReview.soundEnabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Play notification sound when Claude needs attention",
+                    "scope": "window"
+                }
+            }
+        }
+    },
+    "devDependencies": {
+        "@types/node": "^25.3.0",
+        "@types/vscode": "^1.100.0",
+        "@typescript-eslint/eslint-plugin": "^8.56.0",
+        "@typescript-eslint/parser": "^8.56.0",
+        "@vitest/coverage-v8": "^4.0.18",
+        "esbuild": "^0.27.3",
+        "eslint": "^10.0.1",
+        "eslint-config-prettier": "^10.1.8",
+        "eslint-plugin-prettier": "^5.5.5",
+        "prettier": "^3.8.1",
+        "typescript": "^5.9.3",
+        "vitest": "^4.0.18"
+    },
+    "dependencies": {
+        "@vscode-elements/elements": "^2.5.1"
+    }
 }

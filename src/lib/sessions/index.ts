@@ -2,5 +2,10 @@
 export { getSessionsDir } from "./paths";
 export { loadSessionNames, saveSessionName } from "./names";
 export { parseSessionMeta } from "./metadata";
-export { archiveSession, unarchiveSession, deleteSession, loadArchivedSessionIds } from "./lifecycle";
+export {
+    archiveSession,
+    unarchiveSession,
+    deleteSession,
+    loadArchivedSessionIds,
+} from "./lifecycle";
 export { listSessions, listArchivedSessions, getActiveDaemonSessions } from "./query";

@@ -1,0 +1,105 @@
+[2026-02-27T16:43:51.744Z] POST /snapshot
+[2026-02-27T16:43:51.744Z] /snapshot {"tool":"Bash","command":"find \"/Users/spals/projects/extensions/claude-code-review/for analysis/\" -type f -o -type d | head -"}
+[2026-02-27T16:43:52.495Z] POST /changed
+[2026-02-27T16:43:52.496Z] /changed {"tool":"Bash","command":"find \"/Users/spals/projects/extensions/claude-code-review/for analysis/\" -type f -o -type d | head -"}
+[2026-02-27T16:43:57.643Z] POST /snapshot
+[2026-02-27T16:43:57.643Z] /snapshot {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review/.claude/hooks -type f -name \"*.sh\" 2>/dev/n"}
+[2026-02-27T16:43:57.765Z] POST /changed
+[2026-02-27T16:43:57.765Z] /changed {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review/.claude/hooks -type f -name \"*.sh\" 2>/dev/n"}
+[2026-02-27T16:44:12.113Z] POST /snapshot
+[2026-02-27T16:44:12.113Z] /snapshot {"tool":"Bash","command":"ls -la /Users/spals/projects/extensions/claude-code-review/src/lib/hooks/ 2>/dev/null || echo \"hooks"}
+[2026-02-27T16:44:12.229Z] POST /changed
+[2026-02-27T16:44:12.230Z] /changed {"tool":"Bash","command":"ls -la /Users/spals/projects/extensions/claude-code-review/src/lib/hooks/ 2>/dev/null || echo \"hooks"}
+[2026-02-27T16:44:12.438Z] POST /snapshot
+[2026-02-27T16:44:12.438Z] /snapshot {"tool":"Bash","command":"wc -l \"/Users/spals/projects/extensions/claude-code-review/for analysis\"/*/"}
+[2026-02-27T16:44:13.958Z] POST /snapshot
+[2026-02-27T16:44:13.958Z] /snapshot {"tool":"Bash","command":"wc -l \"/Users/spals/projects/extensions/claude-code-review/for analysis\"/**/*.log 2>/dev/null"}
+[2026-02-27T16:44:14.085Z] POST /changed
+[2026-02-27T16:44:14.085Z] /changed {"tool":"Bash","command":"wc -l \"/Users/spals/projects/extensions/claude-code-review/for analysis\"/**/*.log 2>/dev/null"}
+[2026-02-27T16:44:19.522Z] POST /snapshot
+[2026-02-27T16:44:19.522Z] /snapshot {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review -name \"*review-manager*\" -type f"}
+[2026-02-27T16:44:19.724Z] POST /changed
+[2026-02-27T16:44:19.724Z] /changed {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review -name \"*review-manager*\" -type f"}
+[2026-02-27T16:44:19.987Z] POST /snapshot
+[2026-02-27T16:44:19.987Z] /snapshot {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review/src/lib -name \"*.ts\" -type f | head -30"}
+[2026-02-27T16:44:20.100Z] POST /changed
+[2026-02-27T16:44:20.100Z] /changed {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review/src/lib -name \"*.ts\" -type f | head -30"}
+[2026-02-27T16:44:27.452Z] POST /snapshot
+[2026-02-27T16:44:27.453Z] /snapshot {"tool":"Bash","command":"grep -n \"curl\\|http\\|port\" /Users/spals/projects/extensions/claude-code-review/.claude/hooks/*.sh | "}
+[2026-02-27T16:44:27.567Z] POST /changed
+[2026-02-27T16:44:27.568Z] /changed {"tool":"Bash","command":"grep -n \"curl\\|http\\|port\" /Users/spals/projects/extensions/claude-code-review/.claude/hooks/*.sh | "}
+[2026-02-27T16:44:28.859Z] POST /snapshot
+[2026-02-27T16:44:28.859Z] /snapshot {"tool":"Bash","command":"wc -l /Users/spals/projects/extensions/claude-code-review/media/webview/*.js /Users/spals/projects/e"}
+[2026-02-27T16:44:28.989Z] POST /changed
+[2026-02-27T16:44:28.989Z] /changed {"tool":"Bash","command":"wc -l /Users/spals/projects/extensions/claude-code-review/media/webview/*.js /Users/spals/projects/e"}
+[2026-02-27T16:44:31.837Z] POST /snapshot
+[2026-02-27T16:44:31.837Z] /snapshot {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review/src/lib -name \"*.ts\" -type f | head -20"}
+[2026-02-27T16:44:31.956Z] POST /changed
+[2026-02-27T16:44:31.956Z] /changed {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review/src/lib -name \"*.ts\" -type f | head -20"}
+[2026-02-27T16:44:34.893Z] POST /snapshot
+[2026-02-27T16:44:34.893Z] /snapshot {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review/src/lib/actions -type f -name \"*.ts\""}
+[2026-02-27T16:44:35.007Z] POST /changed
+[2026-02-27T16:44:35.007Z] /changed {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review/src/lib/actions -type f -name \"*.ts\""}
+[2026-02-27T16:44:42.502Z] POST /snapshot
+[2026-02-27T16:44:42.503Z] /snapshot {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review/src/lib/review-manager -name \"*file*\" -o -n"}
+[2026-02-27T16:44:42.615Z] POST /changed
+[2026-02-27T16:44:42.615Z] /changed {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review/src/lib/review-manager -name \"*file*\" -o -n"}
+[2026-02-27T16:47:14.296Z] POST /snapshot
+[2026-02-27T16:47:14.297Z] /snapshot {"tool":"Bash","command":"ls -la \"/Users/spals/projects/extensions/claude-code-review/for analysis/\" 2>/dev/null"}
+[2026-02-27T16:47:14.416Z] POST /changed
+[2026-02-27T16:47:14.416Z] /changed {"tool":"Bash","command":"ls -la \"/Users/spals/projects/extensions/claude-code-review/for analysis/\" 2>/dev/null"}
+[2026-02-27T16:47:18.407Z] POST /snapshot
+[2026-02-27T16:47:18.408Z] /snapshot {"tool":"Bash","command":"ls -la \"/Users/spals/projects/extensions/claude-code-review/for analysis/user 1/\" 2>/dev/null && ls "}
+[2026-02-27T16:47:18.530Z] POST /changed
+[2026-02-27T16:47:18.530Z] /changed {"tool":"Bash","command":"ls -la \"/Users/spals/projects/extensions/claude-code-review/for analysis/user 1/\" 2>/dev/null && ls "}
+[2026-02-27T16:50:52.424Z] POST /notify
+[2026-02-27T16:58:09.554Z] POST /snapshot
+[2026-02-27T16:58:09.555Z] /snapshot {"file":"/Users/spals/.claude/plans/misty-discovering-naur.md"}
+[2026-02-27T16:58:10.249Z] POST /changed
+[2026-02-27T16:58:10.250Z] /changed {"tool":"Write","file":"/Users/spals/.claude/plans/misty-discovering-naur.md"}
+[2026-02-27T16:58:25.561Z] POST /notify
+[2026-02-27T17:03:44.513Z] POST /snapshot
+[2026-02-27T17:03:44.513Z] /snapshot {"tool":"Bash","command":"cat /Users/spals/.claude/projects/-Users-spals-projects-extensions-claude-code-review/debb9434-0cd5-"}
+[2026-02-27T17:03:44.645Z] POST /changed
+[2026-02-27T17:03:44.645Z] /changed {"tool":"Bash","command":"cat /Users/spals/.claude/projects/-Users-spals-projects-extensions-claude-code-review/debb9434-0cd5-"}
+[2026-02-27T17:03:53.302Z] POST /snapshot
+[2026-02-27T17:03:53.302Z] /snapshot {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review -type f \\( -name \"*.html\" -o -name \"*.md\" \\"}
+[2026-02-27T17:03:53.513Z] POST /changed
+[2026-02-27T17:03:53.513Z] /changed {"tool":"Bash","command":"find /Users/spals/projects/extensions/claude-code-review -type f \\( -name \"*.html\" -o -name \"*.md\" \\"}
+[2026-02-27T17:04:16.463Z] POST /snapshot
+[2026-02-27T17:04:16.463Z] /snapshot {"tool":"Bash","command":"cat /Users/spals/.claude/projects/-Users-spals-projects-extensions-claude-code-review/debb9434-0cd5-"}
+[2026-02-27T17:04:16.590Z] POST /changed
+[2026-02-27T17:04:16.590Z] /changed {"tool":"Bash","command":"cat /Users/spals/.claude/projects/-Users-spals-projects-extensions-claude-code-review/debb9434-0cd5-"}
+[2026-02-27T17:04:17.893Z] POST /snapshot
+[2026-02-27T17:04:17.893Z] /snapshot {"tool":"Bash","command":"cat /Users/spals/.claude/projects/-Users-spals-projects-extensions-claude-code-review/debb9434-0cd5-"}
+[2026-02-27T17:04:18.017Z] POST /changed
+[2026-02-27T17:04:18.017Z] /changed {"tool":"Bash","command":"cat /Users/spals/.claude/projects/-Users-spals-projects-extensions-claude-code-review/debb9434-0cd5-"}
+[2026-02-27T17:04:19.608Z] POST /snapshot
+[2026-02-27T17:04:19.608Z] /snapshot {"tool":"Bash","command":"cat /Users/spals/.claude/projects/-Users-spals-projects-extensions-claude-code-review/debb9434-0cd5-"}
+[2026-02-27T17:04:19.733Z] POST /changed
+[2026-02-27T17:04:19.733Z] /changed {"tool":"Bash","command":"cat /Users/spals/.claude/projects/-Users-spals-projects-extensions-claude-code-review/debb9434-0cd5-"}
+[2026-02-27T17:04:21.327Z] POST /snapshot
+[2026-02-27T17:04:21.327Z] /snapshot {"tool":"Bash","command":"cat /Users/spals/.claude/projects/-Users-spals-projects-extensions-claude-code-review/debb9434-0cd5-"}
+[2026-02-27T17:04:21.456Z] POST /changed
+[2026-02-27T17:04:21.456Z] /changed {"tool":"Bash","command":"cat /Users/spals/.claude/projects/-Users-spals-projects-extensions-claude-code-review/debb9434-0cd5-"}
+[2026-02-27T17:07:27.938Z] POST /snapshot
+[2026-02-27T17:07:27.938Z] /snapshot {"file":"/Users/spals/projects/extensions/claude-code-review/tasks/day1-research-findings.md"}
+[2026-02-27T17:07:28.053Z] POST /changed
+[2026-02-27T17:07:28.053Z] /changed {"tool":"Write","file":"/Users/spals/projects/extensions/claude-code-review/tasks/day1-research-findings.md"}
+[2026-02-27T17:08:16.099Z] POST /snapshot
+[2026-02-27T17:08:16.099Z] /snapshot {"file":"/Users/spals/projects/extensions/claude-code-review/tasks/day1-research-findings.md"}
+[2026-02-27T17:08:16.187Z] POST /changed
+[2026-02-27T17:08:16.187Z] /changed {"tool":"Edit","file":"/Users/spals/projects/extensions/claude-code-review/tasks/day1-research-findings.md"}
+[2026-02-27T17:08:21.244Z] POST /snapshot
+[2026-02-27T17:08:21.244Z] /snapshot {"file":"/Users/spals/projects/extensions/claude-code-review/tasks/day1-research-findings.md"}
+[2026-02-27T17:08:21.346Z] POST /changed
+[2026-02-27T17:08:21.346Z] /changed {"tool":"Edit","file":"/Users/spals/projects/extensions/claude-code-review/tasks/day1-research-findings.md"}
+[2026-02-27T17:08:39.302Z] POST /snapshot
+[2026-02-27T17:08:39.302Z] /snapshot {"file":"/Users/spals/.claude/plans/misty-discovering-naur.md"}
+[2026-02-27T17:08:39.450Z] POST /changed
+[2026-02-27T17:08:39.451Z] /changed {"tool":"Edit","file":"/Users/spals/.claude/plans/misty-discovering-naur.md"}
+[2026-02-27T17:08:59.155Z] POST /snapshot
+[2026-02-27T17:08:59.156Z] /snapshot {"file":"/Users/spals/.claude/plans/misty-discovering-naur.md"}
+[2026-02-27T17:08:59.299Z] POST /changed
+[2026-02-27T17:08:59.299Z] /changed {"tool":"Edit","file":"/Users/spals/.claude/plans/misty-discovering-naur.md"}
+[2026-02-27T17:10:14.804Z] POST /notify
