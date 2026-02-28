@@ -695,7 +695,6 @@ export function handleWebviewMessage(
                     }
                 }
                 log.log(`open-file-link: no candidates matched for "${filePath}"`);
-                vscode.window.showWarningMessage(`File not found: ${filePath}`);
             })();
             break;
         }

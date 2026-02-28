@@ -595,13 +595,125 @@
         }
     }
 
-    /** Register link provider for multi-line Write/Edit/Read file paths (Bug #4) */
+    /** Register link provider for multi-line tool call file paths */
     function registerWrappedPathLinkProvider(term) {
-        var toolCallRegex = /(?:Write|Edit|Read)\(/g;
+        // Match tool names: Write, Edit, Read, Update (Edit alias), NotebookEdit
+        var toolCallRegex = /(?:Write|Update|Edit|Read|NotebookEdit)\(/g;
+        // Also match truncated tool names at end of line (TUI wraps mid-word)
+        // e.g. "Rea" at end of line + "d(" at start of next
+        var partialEndRegex =
+            /(?:Writ|Wri|Wr|Updat|Upda|Upd|Up|Edi|Ed|Rea|Re|NotebookEdi|NotebookEd|NotebookE|Notebook|Noteboo|Notebo|Noteb|Note|Not|No)$/;
 
         function getLine(buf, row) {
             var line = buf.getLine(row);
             return line ? line.translateToString(true) : "";
+        }
+
+        /**
+         * Assemble file path starting from pathStartCol on startRow,
+         * scanning forward up to maxRows lines for closing ')'.
+         * Returns { filePath, ln, col, endRow, endCol } or null.
+         */
+        function assemblePathForward(buf, startRow, pathStartCol, maxRows) {
+            var startText = getLine(buf, startRow);
+            var rest = startText.substring(pathStartCol);
+            var closeIdx = rest.indexOf(")");
+            if (closeIdx !== -1) return null; // closed on same line — other providers handle it
+
+            var fullPath = rest;
+            var endRow = startRow;
+            var endCol = startText.length;
+            for (var r = startRow + 1; r < Math.min(startRow + maxRows, buf.length); r++) {
+                var nextText = getLine(buf, r);
+                var trimmed = nextText.trim();
+                if (!trimmed) break;
+                var cp = trimmed.indexOf(")");
+                if (cp !== -1) {
+                    fullPath += trimmed.substring(0, cp);
+                    endRow = r;
+                    endCol = nextText.indexOf(")");
+                    break;
+                }
+                fullPath += trimmed;
+                endRow = r;
+                endCol = nextText.length;
+            }
+
+            fullPath = fullPath.replace(/\s+/g, "").trim();
+            if (!fullPath || fullPath.indexOf("/") === -1) return null;
+
+            var filePath = fullPath;
+            var ln, col;
+            var lm = filePath.match(/:(\d+)(?::(\d+))?$/);
+            if (lm) {
+                filePath = filePath.substring(0, lm.index);
+                ln = +lm[1];
+                col = lm[2] ? +lm[2] : undefined;
+            }
+            return { filePath: filePath, ln: ln, col: col, endRow: endRow, endCol: endCol };
+        }
+
+        /**
+         * Search upward from `row` for a tool call (exact or truncated) with unclosed paren.
+         * Returns { toolRow, pathStartCol } or null.
+         */
+        function findToolCallAbove(buf, row, maxUp) {
+            for (var pr = row - 1; pr >= Math.max(0, row - maxUp); pr--) {
+                var prevText = getLine(buf, pr);
+                // 1. Exact match: Write(, Read(, etc.
+                toolCallRegex.lastIndex = 0;
+                var pm = toolCallRegex.exec(prevText);
+                if (pm && prevText.indexOf(")", pm.index + pm[0].length) === -1) {
+                    return { toolRow: pr, pathStartCol: pm.index + pm[0].length };
+                }
+                // 2. Truncated match: line ends with partial tool name, next line starts with rest + (
+                var partialMatch = prevText.match(partialEndRegex);
+                if (partialMatch) {
+                    var nextRow = pr + 1;
+                    if (nextRow < buf.length) {
+                        var nextText = getLine(buf, nextRow);
+                        var joined = partialMatch[0] + nextText.trimStart();
+                        toolCallRegex.lastIndex = 0;
+                        var jm = toolCallRegex.exec(joined);
+                        if (jm && jm.index === 0) {
+                            // Tool call spans pr→nextRow. Path starts after "(" on nextRow.
+                            var parenInNext = nextText.indexOf("(");
+                            if (
+                                parenInNext !== -1 &&
+                                nextText.indexOf(")", parenInNext + 1) === -1
+                            ) {
+                                return { toolRow: nextRow, pathStartCol: parenInNext + 1 };
+                            }
+                        }
+                    }
+                }
+                // If this line has a closing paren, stop — we've left the path region
+                if (prevText.indexOf(")") !== -1) break;
+            }
+            return null;
+        }
+
+        /** Make a link for a single line that opens the assembled multi-line path */
+        function makeSingleLineLink(fp, ln, col, text, y) {
+            var trimmed = text.trim();
+            if (!trimmed) return null;
+            var startX = text.indexOf(trimmed) + 1; // 1-indexed
+            var endX = startX + trimmed.length - 1;
+            // Exclude closing paren from visual range
+            var parenPos = trimmed.indexOf(")");
+            if (parenPos !== -1 && parenPos < trimmed.length - 1) {
+                endX = startX + parenPos;
+            }
+            return {
+                range: {
+                    start: { x: startX, y: y },
+                    end: { x: endX, y: y },
+                },
+                text: fp,
+                activate: function () {
+                    send("open-file-link", { path: fp, line: ln, column: col });
+                },
+            };
         }
 
         try {
@@ -614,115 +726,59 @@
 
                     var links = [];
 
-                    // Forward scan: this line has Write(/Edit(/Read( with unclosed paren
+                    // === Forward scan ===
+                    // This line has Write(/Edit(/Read( etc. with unclosed paren
                     toolCallRegex.lastIndex = 0;
                     var m;
                     while ((m = toolCallRegex.exec(text)) !== null) {
                         var pathStart = m.index + m[0].length;
-                        var rest = text.substring(pathStart);
-                        if (rest.indexOf(")") !== -1) continue; // closed on same line
+                        var result = assemblePathForward(buf, row, pathStart, 8);
+                        if (!result) continue;
 
-                        var fullPath = rest;
-                        var endRow = row;
-                        var endCol = text.length;
-                        for (var r = row + 1; r < Math.min(row + 6, buf.length); r++) {
-                            var nextText = getLine(buf, r);
-                            var trimmed = nextText.trim();
-                            if (!trimmed) break;
-                            var cp = trimmed.indexOf(")");
-                            if (cp !== -1) {
-                                fullPath += trimmed.substring(0, cp);
-                                endRow = r;
-                                endCol = nextText.indexOf(")");
-                                break;
-                            }
-                            fullPath += trimmed;
-                            endRow = r;
-                            endCol = nextText.length;
-                        }
-
-                        fullPath = fullPath.replace(/\s+/g, "").trim();
-                        if (!fullPath || fullPath.indexOf("/") === -1) continue;
-
-                        var filePath = fullPath;
-                        var ln, col;
-                        var lm = filePath.match(/:(\d+)(?::(\d+))?$/);
-                        if (lm) {
-                            filePath = filePath.substring(0, lm.index);
-                            ln = +lm[1];
-                            col = lm[2] ? +lm[2] : undefined;
-                        }
-
+                        // Multi-line range: from path start on this line to end of last line
                         (function (fp, l, c, sx, sy, ex, ey) {
                             links.push({
-                                range: { start: { x: sx, y: sy }, end: { x: ex + 1, y: ey + 1 } },
+                                range: {
+                                    start: { x: sx, y: sy },
+                                    end: { x: ex + 1, y: ey + 1 },
+                                },
                                 text: fp,
                                 activate: function () {
                                     send("open-file-link", { path: fp, line: l, column: c });
                                 },
                             });
-                        })(filePath, ln, col, pathStart + 1, y, endCol, endRow);
+                        })(
+                            result.filePath,
+                            result.ln,
+                            result.col,
+                            pathStart + 1,
+                            y,
+                            result.endCol,
+                            result.endRow,
+                        );
                     }
 
-                    // Backward scan: this line is a continuation of a tool call from above
+                    // === Backward scan ===
+                    // This line is a continuation of a tool call path from above.
+                    // Create a link covering only THIS line (xterm provideLinks is per-line).
                     if (!links.length && text.trim()) {
-                        for (var pr = row - 1; pr >= Math.max(0, row - 5); pr--) {
-                            var prevText = getLine(buf, pr);
-                            toolCallRegex.lastIndex = 0;
-                            var pm = toolCallRegex.exec(prevText);
-                            if (pm && prevText.indexOf(")", pm.index + pm[0].length) === -1) {
-                                // Found unclosed tool call — build full path from pm line through current
-                                var fp2 = prevText.substring(pm.index + pm[0].length);
-                                var eRow = pr;
-                                var eCol = prevText.length;
-                                for (
-                                    var r2 = pr + 1;
-                                    r2 <= Math.min(row + 3, buf.length - 1);
-                                    r2++
-                                ) {
-                                    var lt = getLine(buf, r2);
-                                    var t2 = lt.trim();
-                                    if (!t2) break;
-                                    var cp2 = t2.indexOf(")");
-                                    if (cp2 !== -1) {
-                                        fp2 += t2.substring(0, cp2);
-                                        eRow = r2;
-                                        eCol = lt.indexOf(")");
-                                        break;
-                                    }
-                                    fp2 += t2;
-                                    eRow = r2;
-                                    eCol = lt.length;
-                                }
-                                fp2 = fp2.replace(/\s+/g, "").trim();
-                                if (fp2 && fp2.indexOf("/") !== -1) {
-                                    var lm2 = fp2.match(/:(\d+)(?::(\d+))?$/);
-                                    var f = fp2,
-                                        l2,
-                                        c2;
-                                    if (lm2) {
-                                        f = fp2.substring(0, lm2.index);
-                                        l2 = +lm2[1];
-                                        c2 = lm2[2] ? +lm2[2] : undefined;
-                                    }
-                                    (function (fp, l, c, sx, sy, ex, ey) {
-                                        links.push({
-                                            range: {
-                                                start: { x: sx, y: sy },
-                                                end: { x: ex + 1, y: ey + 1 },
-                                            },
-                                            text: fp,
-                                            activate: function () {
-                                                send("open-file-link", {
-                                                    path: fp,
-                                                    line: l,
-                                                    column: c,
-                                                });
-                                            },
-                                        });
-                                    })(f, l2, c2, pm.index + pm[0].length + 1, pr + 1, eCol, eRow);
-                                }
-                                break;
+                        var found = findToolCallAbove(buf, row, 8);
+                        if (found) {
+                            var result2 = assemblePathForward(
+                                buf,
+                                found.toolRow,
+                                found.pathStartCol,
+                                10,
+                            );
+                            if (result2 && result2.endRow >= row) {
+                                var link = makeSingleLineLink(
+                                    result2.filePath,
+                                    result2.ln,
+                                    result2.col,
+                                    text,
+                                    y,
+                                );
+                                if (link) links.push(link);
                             }
                         }
                     }
