@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("vscode", () => import("./mocks/vscode"));
-vi.mock("../log", () => ({ log: vi.fn() }));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
 vi.mock("../decorations", () => ({
 	applyDecorations: vi.fn(),
 	clearDecorations: vi.fn(),

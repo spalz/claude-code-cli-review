@@ -31,12 +31,11 @@ export class ReviewCodeLensProvider implements vscode.CodeLensProvider {
 				continue;
 			}
 
-			const isPureDelete = range.addedStart === range.addedEnd;
-			// For pure deletions, place CodeLens on the same line as the hover decoration
-			const lensLine = isPureDelete && range.addedStart > 0
-				? range.addedStart - 1
+			// Place CodeLens on the first line of the hunk (removed lines come first in buffer)
+			const lensLine = range.removedStart < range.removedEnd
+				? range.removedStart
 				: range.addedStart;
-			log.log(`CodeLens: hunk=${range.hunkId} addedStart=${range.addedStart} addedEnd=${range.addedEnd} pureDelete=${isPureDelete} lensLine=${lensLine} docLines=${document.lineCount}`);
+			log.log(`CodeLens: hunk=${range.hunkId} removed=${range.removedStart}-${range.removedEnd} added=${range.addedStart}-${range.addedEnd} lensLine=${lensLine} docLines=${document.lineCount}`);
 
 			const lensRange = new vscode.Range(lensLine, 0, lensLine, 0);
 

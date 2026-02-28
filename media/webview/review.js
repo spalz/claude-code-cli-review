@@ -5,6 +5,19 @@
 	"use strict";
 
 	var currentFilePath = null;
+	var isCompact = false;
+
+	// ResizeObserver to toggle compact mode at < 368px
+	var toolbarEl = document.getElementById("reviewToolbar");
+	var ro = new ResizeObserver(function (entries) {
+		var width = entries[0].contentRect.width;
+		var compact = width > 0 && width < 368;
+		if (compact !== isCompact) {
+			isCompact = compact;
+			toolbarEl.classList.toggle("compact", compact);
+		}
+	});
+	ro.observe(toolbarEl);
 
 	window.getCurrentFilePath = function () {
 		return currentFilePath;
@@ -79,12 +92,6 @@
 		if (!data) return;
 
 		var toolbar = document.getElementById("reviewToolbar");
-		var terminalsArea = document.getElementById("terminalsArea");
-		var layoutBefore = {
-			toolbarDisplay: toolbar.style.display,
-			toolbarH: toolbar.offsetHeight,
-			areaH: terminalsArea ? terminalsArea.clientHeight : 0,
-		};
 		var remaining = data.remaining;
 		var total = data.total;
 		var unresolvedHunks = data.unresolvedHunks;
@@ -101,6 +108,7 @@
 		if (noReview) {
 			toolbar.style.display = "none";
 			toolbar.innerHTML = "";
+
 			return;
 		}
 
@@ -116,14 +124,15 @@
 				total +
 				")" +
 				"</button>";
+
 			return;
 		}
 
 		// State A: full toolbar
 		var html = "";
 
-		// Hunk navigation group
-		html += '<div class="toolbar-group">';
+		// Hunk navigation group (hidden in compact mode)
+		html += '<div class="toolbar-group toolbar-hunk-nav">';
 		html +=
 			'<button class="toolbar-btn" data-action="prev-hunk" title="Previous change (\u2318[)">\u25B2</button>';
 		html +=
@@ -136,8 +145,8 @@
 			'<button class="toolbar-btn" data-action="next-hunk" title="Next change (\u2318])">\u25BC</button>';
 		html += "</div>";
 
-		// Separator
-		html += '<div class="toolbar-separator"></div>';
+		// Separator (hidden in compact mode)
+		html += '<div class="toolbar-separator toolbar-hunk-sep"></div>';
 
 		// Keep/Undo current file group
 		html += '<div class="toolbar-group">';
@@ -176,26 +185,8 @@
 
 		toolbar.innerHTML = html;
 
-		// Check if layout changed (could cause viewport jump)
-		var layoutAfter = {
-			toolbarDisplay: toolbar.style.display,
-			toolbarH: toolbar.offsetHeight,
-			areaH: terminalsArea ? terminalsArea.clientHeight : 0,
-		};
-		if (
-			layoutBefore.toolbarDisplay !== layoutAfter.toolbarDisplay ||
-			layoutBefore.toolbarH !== layoutAfter.toolbarH ||
-			layoutBefore.areaH !== layoutAfter.areaH
-		) {
-			diagLog("scroll-diag", "toolbar-LAYOUT", {
-				before: layoutBefore,
-				after: layoutAfter,
-			});
-			// Toolbar visibility changed — re-fit terminal to new available height
-			if (typeof fitActiveTerminal === "function") {
-				fitActiveTerminal("toolbar-layout");
-			}
-		}
+		// Toolbar is position:absolute — update padding on terminals area to prevent overlap
+		updateTerminalsPadding(toolbar, terminalsArea);
 	};
 	// Toolbar more menu — uses vscode-context-menu
 	var toolbarCtxMenu = null;
@@ -207,7 +198,11 @@
 			document.body.appendChild(toolbarCtxMenu);
 			toolbarCtxMenu.addEventListener("vsc-context-menu-select", function (e) {
 				var val = e.detail && e.detail.value;
-				if (val === "reject-all") {
+				if (val === "accept-all") {
+					showConfirm("Accept all remaining changes?", function () {
+						send("accept-all-confirm");
+					});
+				} else if (val === "reject-all") {
 					showConfirm("Reject all remaining changes?", function () {
 						send("reject-all-confirm");
 					});
@@ -231,12 +226,30 @@
 			return;
 		}
 		var rect = btn.getBoundingClientRect();
-		menu.data = [
-			{ label: "Reject all changes", value: "reject-all" },
-			{ label: "Dismiss all reviews", value: "dismiss-all" },
-		];
+		var items = [];
+		// In compact mode, Accept All is hidden from toolbar — show it in menu
+		if (isCompact) {
+			items.push({ label: "Accept all changes", value: "accept-all" });
+		}
+		items.push({ label: "Reject all changes", value: "reject-all" });
+		items.push({ label: "Dismiss all reviews", value: "dismiss-all" });
+		menu.data = items;
 		menu.style.left = rect.right - 160 + "px";
 		menu.style.top = rect.bottom + "px";
 		menu.show = true;
+
+		// Color accept-all (green) and reject-all (red) via CSS variable override
+		requestAnimationFrame(function () {
+			if (!menu.shadowRoot) return;
+			var menuItems = menu.shadowRoot.querySelectorAll("vscode-context-menu-item");
+			menuItems.forEach(function (el) {
+				var val = el.getAttribute("value");
+				if (val === "accept-all") {
+					el.style.setProperty("--vscode-menu-foreground", "#28a745");
+				} else if (val === "reject-all") {
+					el.style.setProperty("--vscode-menu-foreground", "#dc3545");
+				}
+			});
+		});
 	}
 })();

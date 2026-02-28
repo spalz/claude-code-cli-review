@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeUnifiedDiff } from "./helpers";
 
-vi.mock("../log", () => ({ log: vi.fn() }));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
 
 // Hoisted mocks for fs and child_process — used by computeDiff tests.
 // parseUnifiedDiff is a pure function and doesn't use these.

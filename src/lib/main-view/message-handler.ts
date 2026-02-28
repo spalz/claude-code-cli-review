@@ -18,6 +18,9 @@ import {
 import type { PtyManager } from "../pty-manager";
 import type { SessionManager } from "./session-manager";
 import type { KeybindingInfo, HookStatus, ExtensionToWebviewMessage } from "../../types";
+import type { ImageTracker } from "./image-tracker";
+
+export { ImageTracker } from "./image-tracker";
 
 export interface MessageContext {
 	sessionMgr: SessionManager;
@@ -99,40 +102,6 @@ export async function resolveClipboard(): Promise<{ type: "text"; text: string }
 	// Non-macOS: just read text
 	const text = await vscode.env.clipboard.readText();
 	return text ? { type: "text", text } : null;
-}
-
-export class ImageTracker {
-	/** Images keyed by CLI's [Image #N] number */
-	private _bound: Map<number, string> = new Map(); // cliIndex → filePath
-	/** Per-PTY-session FIFO queues of pending images */
-	private _queues: Map<number, { filePath: string; base64: string; mimeType: string }[]> = new Map();
-
-	/** Queue an image for a specific PTY session */
-	enqueue(ptyId: number, filePath: string, base64: string, mimeType: string): void {
-		let q = this._queues.get(ptyId);
-		if (!q) { q = []; this._queues.set(ptyId, q); }
-		q.push({ filePath, base64, mimeType });
-	}
-
-	/** Shift oldest pending for a PTY session */
-	shiftPending(ptyId: number): { filePath: string; base64: string; mimeType: string } | undefined {
-		const q = this._queues.get(ptyId);
-		return q?.shift();
-	}
-
-	/** Bind CLI's [Image #N] to a file path (called after shiftPending) */
-	bind(cliIndex: number, filePath: string): void {
-		this._bound.set(cliIndex, filePath);
-	}
-
-	getImagePath(index: number): string | undefined {
-		return this._bound.get(index);
-	}
-
-	clear(): void {
-		this._bound.clear();
-		this._queues.clear();
-	}
 }
 
 export function handleWebviewMessage(

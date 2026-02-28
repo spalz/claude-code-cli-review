@@ -211,6 +211,7 @@ function updateContextKeys(): void {
 		if (hist.redoStack.length > 0) canRedo = true;
 		if (canUndo && canRedo) break;
 	}
+	log.log(`undo-history: updateContextKeys — ccr.canUndoReview=${canUndo}, ccr.canRedoReview=${canRedo}, totalFiles=${histories.size}`);
 	vscode.commands.executeCommand("setContext", "ccr.canUndoReview", canUndo);
 	vscode.commands.executeCommand("setContext", "ccr.canRedoReview", canRedo);
 }

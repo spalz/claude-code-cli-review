@@ -1,7 +1,7 @@
 // Editor decorations for inline diff rendering (buttons via CodeLens)
 import * as vscode from "vscode";
 import * as path from "path";
-import * as log from "./log";
+import { log, logCat } from "./log";
 import type { IFileReview } from "../types";
 import { computeHunkInlineChanges } from "./inline-diff";
 
@@ -32,6 +32,16 @@ const decoAddedInline = vscode.window.createTextEditorDecorationType({
 	borderRadius: "2px",
 });
 
+const decoRemoved = vscode.window.createTextEditorDecorationType({
+	backgroundColor: new vscode.ThemeColor("diffEditor.removedLineBackground"),
+	isWholeLine: true,
+	overviewRulerColor: new vscode.ThemeColor("editorGutter.deletedBackground"),
+	overviewRulerLane: vscode.OverviewRulerLane.Left,
+	borderWidth: "0 0 0 3px",
+	borderStyle: "solid",
+	borderColor: new vscode.ThemeColor("editorGutter.deletedBackground"),
+});
+
 const decoSeparator = vscode.window.createTextEditorDecorationType({
 	borderWidth: "1px 0 0 0",
 	borderStyle: "dashed",
@@ -59,12 +69,13 @@ export function applyDecorations(editor: vscode.TextEditor, review: IFileReview)
 
 	// Safety net: if editor content doesn't match merged content, decorations would be wrong
 	if (editor.document.lineCount !== review.mergedLines.length) {
-		log.log(`applyDecorations: lineCount mismatch for ${fp}: editor=${editor.document.lineCount}, merged=${review.mergedLines.length}`);
+		logCat("decoration", `lineCount mismatch for ${fp}: editor=${editor.document.lineCount}, merged=${review.mergedLines.length}`);
 		clearDecorations(editor);
 		return;
 	}
 
 	const ad: vscode.DecorationOptions[] = [];
+	const rd: vscode.DecorationOptions[] = [];
 	const sep: vscode.Range[] = [];
 	const adInline: vscode.Range[] = [];
 	const gutterPending: vscode.DecorationOptions[] = [];
@@ -82,22 +93,22 @@ export function applyDecorations(editor: vscode.TextEditor, review: IFileReview)
 		const hunk = review.hunks.find((h) => h.id === range.hunkId);
 		if (!hunk || hunk.resolved) continue;
 
-		const hunkLineCount = range.addedEnd - range.addedStart;
+		const isPureDeletion = range.removedStart < range.removedEnd;
+		const hunkLineCount = (range.addedEnd - range.addedStart) + (range.removedEnd - range.removedStart);
 		if (totalRanges + hunkLineCount > MAX_DECORATIONS) {
 			truncated = true;
 			break;
 		}
 		totalRanges += hunkLineCount;
 
-		// Separator above hunk
-		if (range.addedStart > 0) {
-			sep.push(new vscode.Range(range.addedStart, 0, range.addedStart, 0));
+		// Separator above hunk (above removed lines for pure deletions)
+		const separatorLine = isPureDeletion ? range.removedStart : range.addedStart;
+		if (separatorLine > 0) {
+			sep.push(new vscode.Range(separatorLine, 0, separatorLine, 0));
 		}
 
 		// Gutter indicator on first line of hunk
-		const gutterLine = range.addedStart < range.addedEnd
-			? range.addedStart
-			: Math.max(0, range.addedStart - 1);
+		const gutterLine = isPureDeletion ? range.removedStart : range.addedStart;
 		if (pendingIconPath) {
 			gutterPending.push({
 				range: new vscode.Range(gutterLine, 0, gutterLine, 0),
@@ -108,33 +119,36 @@ export function applyDecorations(editor: vscode.TextEditor, review: IFileReview)
 			});
 		}
 
-		// Build hover with removed content (shown on first added line)
+		// Build hover with removed content
 		const hoverMessage = hunk.removed.length > 0
 			? buildRemovedHover(hunk.removed)
 			: undefined;
 
+		// Pure deletions: removed lines are in the buffer — decorate with red background
+		if (isPureDeletion) {
+			for (let i = range.removedStart; i < range.removedEnd; i++) {
+				const opts: vscode.DecorationOptions = {
+					range: new vscode.Range(i, 0, i, 10000),
+				};
+				if (i === range.removedStart && hoverMessage) {
+					opts.hoverMessage = hoverMessage;
+				}
+				rd.push(opts);
+			}
+		}
+
+		// Added lines: green background + hover on first line
 		for (let i = range.addedStart; i < range.addedEnd; i++) {
 			const opts: vscode.DecorationOptions = {
 				range: new vscode.Range(i, 0, i, 10000),
 			};
-			// Attach hover to first added line only
 			if (i === range.addedStart && hoverMessage) {
 				opts.hoverMessage = hoverMessage;
 			}
 			ad.push(opts);
 		}
 
-		// For pure deletions (no added lines), show hover on preceding context line (or line 0)
-		if (range.addedStart === range.addedEnd && hunk.removed.length > 0) {
-			const hoverLine = range.addedStart > 0 ? range.addedStart - 1 : 0;
-			log.log(`applyDecorations: pure-delete hunk=${range.hunkId} addedStart=${range.addedStart} hoverLine=${hoverLine} (CodeLens will be on line ${range.addedStart})`);
-			ad.push({
-				range: new vscode.Range(hoverLine, 0, hoverLine, 0),
-				hoverMessage,
-			});
-		}
-
-		// Character-level inline changes (only for added lines since removed are in hover)
+		// Character-level inline changes (only for added lines since removed are shown inline for pure deletions)
 		const { addedLineChanges } = computeHunkInlineChanges(
 			hunk.removed,
 			hunk.added,
@@ -149,7 +163,7 @@ export function applyDecorations(editor: vscode.TextEditor, review: IFileReview)
 	}
 
 	if (truncated) {
-		log.log(`applyDecorations: truncated at ${MAX_DECORATIONS} decoration ranges for ${editor.document.uri.fsPath}`);
+		log(`applyDecorations: truncated at ${MAX_DECORATIONS} decoration ranges for ${editor.document.uri.fsPath}`);
 		vscode.window.showWarningMessage(
 			`Claude Code Review: Too many changes (>${MAX_DECORATIONS} lines). Showing first hunks only.`,
 		);
@@ -157,18 +171,20 @@ export function applyDecorations(editor: vscode.TextEditor, review: IFileReview)
 
 	const tBuild = performance.now();
 	editor.setDecorations(decoAdded, ad);
+	editor.setDecorations(decoRemoved, rd);
 	editor.setDecorations(decoAddedInline, adInline);
 	editor.setDecorations(decoGutterPending, gutterPending);
 	editor.setDecorations(decoSeparator, sep);
 	const tEnd = performance.now();
-	log.log(`applyDecorations: ${fp.split("/").pop()}, hunks=${review.hunkRanges.length}, ranges=${ad.length}+${adInline.length} inline+${gutterPending.length} gutter, build=${(tBuild - t0).toFixed(1)}ms, setDecorations=${(tEnd - tBuild).toFixed(1)}ms, total=${(tEnd - t0).toFixed(1)}ms`);
+	log(`applyDecorations: ${fp.split("/").pop()}, hunks=${review.hunkRanges.length}, ranges=${ad.length}+${rd.length} removed+${adInline.length} inline+${gutterPending.length} gutter, build=${(tBuild - t0).toFixed(1)}ms, setDecorations=${(tEnd - tBuild).toFixed(1)}ms, total=${(tEnd - t0).toFixed(1)}ms`);
 }
 
 export function clearDecorations(editor: vscode.TextEditor): void {
 	const t0 = performance.now();
 	editor.setDecorations(decoAdded, []);
+	editor.setDecorations(decoRemoved, []);
 	editor.setDecorations(decoAddedInline, []);
 	editor.setDecorations(decoGutterPending, []);
 	editor.setDecorations(decoSeparator, []);
-	log.log(`clearDecorations: ${editor.document.uri.fsPath.split("/").pop()}, ${(performance.now() - t0).toFixed(1)}ms`);
+	log(`clearDecorations: ${editor.document.uri.fsPath.split("/").pop()}, ${(performance.now() - t0).toFixed(1)}ms`);
 }

@@ -1,5 +1,5 @@
 // Hook constants — version, filenames, legacy markers
-export const HOOK_VERSION = "8.2";
+export const HOOK_VERSION = "9.0";
 export const POST_HOOK_FILENAME = "ccr-review-hook.sh";
 export const PRE_HOOK_FILENAME = "ccr-pre-hook.sh";
 export const NOTIFY_HOOK_FILENAME = "ccr-notify-hook.sh";

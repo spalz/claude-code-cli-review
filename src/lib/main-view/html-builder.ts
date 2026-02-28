@@ -64,11 +64,10 @@ export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.U
     </div>
   </div>
 
-  <!-- REVIEW TOOLBAR (hidden by default) -->
-  <div class="review-toolbar" id="reviewToolbar" style="display:none"></div>
-
   <!-- MAIN CONTENT -->
   <div class="content" id="mainContent">
+    <!-- REVIEW TOOLBAR (absolute, overlays terminal area) -->
+    <div class="review-toolbar" id="reviewToolbar" style="display:none"></div>
     <div id="sessionsView">
       <div class="sessions-list" id="sessionsList"><div class="empty">Loading sessions...</div></div>
       <div class="archive-section" id="archiveSection" style="display:none">

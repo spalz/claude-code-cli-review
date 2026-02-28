@@ -1,4 +1,4 @@
-// Claude Code with Review v8.0 — hook-based review + activitybar + Claude CLI sessions
+// Claude Code with Review v9.0 — hook-based review + activitybar + Claude CLI sessions
 import * as vscode from "vscode";
 import * as state from "./lib/state";
 import { ReviewCodeLensProvider } from "./lib/codelens";
@@ -11,7 +11,7 @@ import { startServer, stopServer, setAddFileHandler, setWorkspacePath, setGetAct
 import { checkAndPrompt, doInstall } from "./lib/hooks";
 import { ReviewManager } from "./lib/review-manager";
 import { registerDocumentListener } from "./lib/document-listener";
-import { clearAllHistories } from "./lib/undo-history";
+import { clearAllHistories, isApplyingEdit, hasUndoState, hasRedoState } from "./lib/undo-history";
 import * as actions from "./lib/actions";
 import * as log from "./lib/log";
 import { fileLog } from "./lib/file-logger";
@@ -30,6 +30,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		log.log("no workspace folder, skipping activation");
 		return;
 	}
+	log.initFileLog(workspacePath);
 
 	fileLog.init(workspacePath);
 
@@ -96,7 +97,10 @@ export function activate(context: vscode.ExtensionContext): void {
 						"vscode.moveViews",
 						{ viewIds: ["ccr.main"], destinationId: "workbench.panel.auxiliarybar" },
 					);
-					await vscode.commands.executeCommand("ccr.main.focus");
+					// Only focus panel if no terminal is active — avoid stealing focus from CLI
+					if (!vscode.window.activeTerminal) {
+						await vscode.commands.executeCommand("ccr.main.focus");
+					}
 				} catch {
 					// Command may not exist in older VS Code / Cursor
 				}
@@ -192,8 +196,16 @@ export function activate(context: vscode.ExtensionContext): void {
 					state.refreshAll();
 				},
 			],
-		["ccr.undo", () => reviewManager?.undoResolve()],
-		["ccr.redo", () => reviewManager?.redoResolve()],
+		["ccr.undo", () => {
+			const fp = vscode.window.activeTextEditor?.document.uri.fsPath;
+			log.logCat("resolve", `ccr.undo COMMAND FIRED — activeFile=${fp?.split("/").pop()}, hasUndo=${fp ? hasUndoState(fp) : "no-editor"}, hasRedo=${fp ? hasRedoState(fp) : "no-editor"}`);
+			reviewManager?.undoResolve();
+		}],
+		["ccr.redo", () => {
+			const fp = vscode.window.activeTextEditor?.document.uri.fsPath;
+			log.logCat("resolve", `ccr.redo COMMAND FIRED — activeFile=${fp?.split("/").pop()}, hasUndo=${fp ? hasUndoState(fp) : "no-editor"}, hasRedo=${fp ? hasRedoState(fp) : "no-editor"}`);
+			reviewManager?.redoResolve();
+		}],
 		["ccr.prevFile", () => actions.navigateFile(-1)],
 			["ccr.nextFile", () => actions.navigateFile(1)],
 			["ccr.prevHunk", () => actions.navigateHunk(-1)],
@@ -243,11 +255,33 @@ export function activate(context: vscode.ExtensionContext): void {
 		// --- Re-apply decorations on tab switch + refresh toolbar state ---
 		context.subscriptions.push(
 			vscode.window.onDidChangeActiveTextEditor((editor) => {
-				// Skip processing during managed transitions (resolve, undo, redo, navigate)
-				// These operations handle their own decorations and state updates.
+				// During managed transitions (resolve, undo, redo, navigate) — defer instead of suppress.
+				// The transition will handle its own decorations, but if the user manually
+				// switches tabs during a transition, we need to catch up afterward.
 				if (reviewManager?.isTransitioning) {
 					const fname = editor?.document.uri.fsPath.split("/").pop() ?? "(none)";
-					log.log(`onTabSwitch: SUPPRESSED (transitioning) ${fname}`);
+					log.log(`onTabSwitch: DEFERRED (transitioning) ${fname}`);
+					setTimeout(() => {
+						if (reviewManager?.isTransitioning) return;
+						const currentEditor = vscode.window.activeTextEditor;
+						if (!currentEditor) return;
+						const fp = currentEditor.document.uri.fsPath;
+						const rev = state.activeReviews.get(fp);
+						// Update context key (was missing — caused undo keybinding to fail)
+						const deferredHasHistory = hasUndoState(fp) || hasRedoState(fp);
+						vscode.commands.executeCommand("setContext", "ccr.activeFileInReview", !!rev || deferredHasHistory);
+						log.logCat("focus", `onTabSwitch DEFERRED: ${fp.split("/").pop()} — review=${!!rev}, hasUndo=${hasUndoState(fp)}, hasRedo=${hasRedoState(fp)}, setting ccr.activeFileInReview=${!!rev || deferredHasHistory}`);
+						if (rev) {
+							const merged = rev.mergedLines.join("\n");
+							if (currentEditor.document.getText() === merged) {
+								applyDecorations(currentEditor, rev);
+							} else {
+								log.log(`onTabSwitch deferred: content mismatch for ${fp}, self-healing`);
+								clearDecorations(currentEditor);
+								void reviewManager!.ensureMergedContent(fp);
+							}
+						}
+					}, 200);
 					return;
 				}
 				const tTab = performance.now();
@@ -255,7 +289,12 @@ export function activate(context: vscode.ExtensionContext): void {
 				if (editor) {
 					const filePath = editor.document.uri.fsPath;
 					const review = state.activeReviews.get(filePath);
-					vscode.commands.executeCommand("setContext", "ccr.activeFileInReview", !!review);
+					const undoAvail = hasUndoState(filePath);
+					const redoAvail = hasRedoState(filePath);
+					const fileHasHistory = undoAvail || redoAvail;
+					const ctxValue = !!review || fileHasHistory;
+					log.logCat("focus", `onTabSwitch: ${fname} — review=${!!review}, hasUndo=${undoAvail}, hasRedo=${redoAvail}, setting ccr.activeFileInReview=${ctxValue}`);
+					vscode.commands.executeCommand("setContext", "ccr.activeFileInReview", ctxValue);
 					if (review) {
 						const mergedContent = review.mergedLines.join("\n");
 						if (editor.document.getText() === mergedContent) {
@@ -309,14 +348,64 @@ export function activate(context: vscode.ExtensionContext): void {
 		// --- Document listener for cleanup ---
 		context.subscriptions.push(registerDocumentListener(context));
 
+		// --- Document change listener for decoration recovery ---
+		// When a file under review changes externally (formatOnSave, other extensions),
+		// re-verify buffer and re-apply decorations. Debounced to avoid rapid fire.
+		{
+			let decoDebounce: NodeJS.Timeout | null = null;
+			context.subscriptions.push(
+				vscode.workspace.onDidChangeTextDocument((e) => {
+					const fp = e.document.uri.fsPath;
+					// Skip our own edits (resolve, undo, redo apply content via editor.edit)
+					if (isApplyingEdit(fp)) return;
+					const review = state.activeReviews.get(fp);
+					if (!review) return;
+					if (decoDebounce) clearTimeout(decoDebounce);
+					decoDebounce = setTimeout(() => {
+						decoDebounce = null;
+						const editor = vscode.window.visibleTextEditors.find(
+							(ed) => ed.document.uri.fsPath === fp,
+						);
+						if (!editor) return;
+						const mergedContent = review.mergedLines.join("\n");
+						if (editor.document.getText() === mergedContent) {
+							applyDecorations(editor, review);
+						} else {
+							log.log(`onDocChange: content diverged for ${fp}, self-healing`);
+							void reviewManager!.ensureMergedContent(fp);
+						}
+					}, 300);
+				}),
+			);
+		}
+
 		// --- Restore persisted review state ---
 		// Restore state immediately, but defer UI refresh until after webview is ready
 		reviewManager.restore().then(async (restored) => {
 			if (restored) {
 				log.log("Review state restored from persistence");
 				vscode.commands.executeCommand("setContext", "ccr.reviewActive", true);
-				// Don't open a review file — keep the user where they were before reload.
-				// Decorations will be applied when the user switches to a review file via onTabSwitch.
+
+				// Apply merged content to any currently visible review files.
+				// After reload, editors have disk content (modifiedContent) while review
+				// expects inline diff content (removed+added lines). Apply to restore
+				// decorations, CodeLens, and proper review display.
+				for (const editor of vscode.window.visibleTextEditors) {
+					const fp = editor.document.uri.fsPath;
+					if (state.activeReviews.has(fp)) {
+						log.log(`restore: applying merged content to ${fp.split("/").pop()}`);
+						await reviewManager!.ensureMergedContent(fp);
+					}
+				}
+
+				// Update context key for the active editor
+				const activeEditor = vscode.window.activeTextEditor;
+				if (activeEditor) {
+					const fp = activeEditor.document.uri.fsPath;
+					const hasReview = state.activeReviews.has(fp);
+					vscode.commands.executeCommand("setContext", "ccr.activeFileInReview", hasReview);
+				}
+
 				state.refreshAll();
 			}
 		});
@@ -348,7 +437,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				.then(() => {});
 		}
 
-		log.log("v8.0 activated successfully");
+		log.log("v9.0 activated successfully");
 	} catch (err) {
 		log.log("activation error:", (err as Error).message, (err as Error).stack);
 		throw err;
@@ -402,4 +491,5 @@ export function deactivate(): void {
 	clearAllHistories();
 	stopServer();
 	fileLog.dispose();
+	log.disposeFileLog();
 }

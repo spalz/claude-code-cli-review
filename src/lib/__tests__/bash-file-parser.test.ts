@@ -194,6 +194,48 @@ describe("parseBashCommand", () => {
 			expect(r.deleted).toEqual([]);
 			expect(r.modified).toEqual([]);
 		});
+
+		it("2>/dev/null is not extracted as file path", () => {
+			const r = parseBashCommand("cat file.ts 2>/dev/null", "/ws");
+			expect(r.modified).toEqual([]);
+			expect(r.deleted).toEqual([]);
+		});
+
+		it("2>&1 is not extracted as file path", () => {
+			const r = parseBashCommand("echo test 2>&1", "/ws");
+			expect(r.modified).toEqual([]);
+		});
+
+		it("compound redirect with 2>/dev/null in sed", () => {
+			const r = parseBashCommand("sed -i 's/a/b/' file.ts 2>/dev/null", "/ws");
+			expect(r.modified).toEqual(["/ws/file.ts"]);
+		});
+
+		it("paths with newlines are rejected", () => {
+			const r = parseBashCommand("touch 'file\nname.ts'", "/ws");
+			expect(r.modified).toEqual([]);
+		});
+
+		it("trailing slash normalized (cp -r dest/)", () => {
+			const r = parseBashCommand("cp -r src/ dest/", "/ws");
+			expect(r.modified).toEqual(["/ws/dest"]);
+		});
+
+		it("handles paths with unicode characters", () => {
+			const r = parseBashCommand("rm файл.ts", "/ws");
+			expect(r.deleted).toEqual(["/ws/файл.ts"]);
+		});
+
+		it("> /dev/null is filtered", () => {
+			const r = parseBashCommand("echo data > /dev/null", "/ws");
+			expect(r.modified).toEqual([]);
+		});
+
+		it("echo with stderr redirect does not produce file modifications", () => {
+			const r = parseBashCommand("command_that_fails 2>/dev/null || true", "/ws");
+			expect(r.modified).toEqual([]);
+			expect(r.deleted).toEqual([]);
+		});
 	});
 
 	// --- path resolution ---

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("vscode", () => import("./mocks/vscode"));
-vi.mock("../log", () => ({ log: vi.fn() }));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
 
 import { ReviewCodeLensProvider } from "../codelens";
 import * as state from "../state";

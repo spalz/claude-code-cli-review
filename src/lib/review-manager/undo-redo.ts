@@ -1,6 +1,6 @@
 // Undo/Redo — manages undo and redo for hunk resolution
 import * as vscode from "vscode";
-import * as log from "../log";
+import { logCat } from "../log";
 import * as state from "../state";
 
 import { popUndoState, pushRedoState, popRedoState, pushUndoState, getLastUndoFilePath, getLastRedoFilePath, hasUndoState, hasRedoState } from "../undo-history";
@@ -22,14 +22,14 @@ export async function undoResolve(mgr: ReviewManagerInternal): Promise<void> {
 		: lastUndoFile;
 
 	if (!fsPath || !hasUndoState(fsPath)) {
-		log.log(`ReviewManager.undoResolve: no undo state available (active=${activeFile}, lastGlobal=${lastUndoFile})`);
+		logCat("resolve",`ReviewManager.undoResolve: no undo state available (active=${activeFile}, lastGlobal=${lastUndoFile})`);
 		vscode.window.setStatusBarMessage("$(info) Nothing to undo", 2000);
 		return;
 	}
 
 	// If target file is different from active editor, open it first
 	if (fsPath !== activeFile) {
-		log.log(`ReviewManager.undoResolve: cross-file undo, opening ${fsPath}`);
+		logCat("resolve",`ReviewManager.undoResolve: cross-file undo, opening ${fsPath}`);
 		await vscode.window.showTextDocument(vscode.Uri.file(fsPath));
 	}
 
@@ -37,7 +37,7 @@ export async function undoResolve(mgr: ReviewManagerInternal): Promise<void> {
 
 	const snapshot = popUndoState(fsPath);
 	if (!snapshot) {
-		log.log(`ReviewManager.undoResolve: no undo state for ${fsPath}`);
+		logCat("resolve",`ReviewManager.undoResolve: no undo state for ${fsPath}`);
 		return;
 	}
 
@@ -54,15 +54,15 @@ export async function undoResolve(mgr: ReviewManagerInternal): Promise<void> {
 	}
 
 	const snapshotHunkState = snapshot.hunks.map((h) => `${h.id}:${h.resolved ? (h.accepted ? "A" : "R") : "U"}`).join(",");
-	log.log(`ReviewManager.undoResolve: restoring ${fsPath}, unresolved=${snapshot.hunks.filter((h) => !h.resolved).length}, snapshot hunks=[${snapshotHunkState}], mergedLines=${snapshot.mergedLines.length}`);
+	logCat("resolve",`ReviewManager.undoResolve: restoring ${fsPath}, unresolved=${snapshot.hunks.filter((h) => !h.resolved).length}, snapshot hunks=[${snapshotHunkState}], mergedLines=${snapshot.mergedLines.length}`);
 	restoreFromSnapshot(mgr, fsPath, snapshot);
 	// Reveal first unresolved hunk from the restored snapshot
 	const firstRange = snapshot.hunkRanges[0];
 	const revealLine = firstRange
-		? (firstRange.addedStart)
+		? (firstRange.removedStart < firstRange.removedEnd ? firstRange.removedStart : firstRange.addedStart)
 		: undefined;
 	await applyContentViaEdit(mgr, fsPath, snapshot.mergedLines.join("\n"), revealLine);
-	log.log(`ReviewManager.undoResolve: END total=${(performance.now() - tUndo).toFixed(1)}ms`);
+	logCat("resolve",`ReviewManager.undoResolve: END total=${(performance.now() - tUndo).toFixed(1)}ms`);
 }
 
 export async function redoResolve(mgr: ReviewManagerInternal): Promise<void> {
@@ -77,21 +77,21 @@ export async function redoResolve(mgr: ReviewManagerInternal): Promise<void> {
 		: lastRedoFile;
 
 	if (!fsPath || !hasRedoState(fsPath)) {
-		log.log(`ReviewManager.redoResolve: no redo state available (active=${activeFile}, lastGlobal=${lastRedoFile})`);
+		logCat("resolve",`ReviewManager.redoResolve: no redo state available (active=${activeFile}, lastGlobal=${lastRedoFile})`);
 		vscode.window.setStatusBarMessage("$(info) Nothing to redo", 2000);
 		return;
 	}
 
 	// If target file is different from active editor, open it first
 	if (fsPath !== activeFile) {
-		log.log(`ReviewManager.redoResolve: cross-file redo, opening ${fsPath}`);
+		logCat("resolve",`ReviewManager.redoResolve: cross-file redo, opening ${fsPath}`);
 		await vscode.window.showTextDocument(vscode.Uri.file(fsPath));
 	}
 
 	const currentReview = state.activeReviews.get(fsPath);
 	const snapshot = popRedoState(fsPath);
 	if (!snapshot) {
-		log.log(`ReviewManager.redoResolve: no redo state for ${fsPath}`);
+		logCat("resolve",`ReviewManager.redoResolve: no redo state for ${fsPath}`);
 		return;
 	}
 
@@ -102,9 +102,9 @@ export async function redoResolve(mgr: ReviewManagerInternal): Promise<void> {
 
 	const allResolved = snapshot.hunks.every((h) => h.resolved);
 	const redoHunkState = snapshot.hunks.map((h) => `${h.id}:${h.resolved ? (h.accepted ? "A" : "R") : "U"}`).join(",");
-	log.log(`ReviewManager.redoResolve: snapshot hunks=[${redoHunkState}], allResolved=${allResolved}, mergedLines=${snapshot.mergedLines.length}`);
+	logCat("resolve",`ReviewManager.redoResolve: snapshot hunks=[${redoHunkState}], allResolved=${allResolved}, mergedLines=${snapshot.mergedLines.length}`);
 	if (allResolved) {
-		log.log(`ReviewManager.redoResolve: re-finalizing ${fsPath}`);
+		logCat("resolve",`ReviewManager.redoResolve: re-finalizing ${fsPath}`);
 		restoreFromSnapshot(mgr, fsPath, snapshot);
 		const review = state.activeReviews.get(fsPath);
 		if (review) {
@@ -112,23 +112,23 @@ export async function redoResolve(mgr: ReviewManagerInternal): Promise<void> {
 			await finalizeFile(mgr, fsPath);
 		}
 	} else {
-		log.log(`ReviewManager.redoResolve: restoring ${fsPath}, unresolved=${snapshot.hunks.filter((h) => !h.resolved).length}`);
+		logCat("resolve",`ReviewManager.redoResolve: restoring ${fsPath}, unresolved=${snapshot.hunks.filter((h) => !h.resolved).length}`);
 		restoreFromSnapshot(mgr, fsPath, snapshot);
 		// Reveal first unresolved hunk from the restored snapshot
 		const firstRange = snapshot.hunkRanges[0];
 		const revealLine = firstRange
-			? (firstRange.addedStart)
+			? (firstRange.removedStart < firstRange.removedEnd ? firstRange.removedStart : firstRange.addedStart)
 			: undefined;
 		await applyContentViaEdit(mgr, fsPath, snapshot.mergedLines.join("\n"), revealLine);
 	}
-	log.log(`ReviewManager.redoResolve: END total=${(performance.now() - tRedo).toFixed(1)}ms`);
+	logCat("resolve",`ReviewManager.redoResolve: END total=${(performance.now() - tRedo).toFixed(1)}ms`);
 }
 
 export function restoreFromSnapshot(mgr: ReviewManagerInternal, fsPath: string, snapshot: ReviewSnapshot): void {
 	const unresolvedCount = snapshot.hunks.filter((h) => !h.resolved).length;
 	let review = state.activeReviews.get(fsPath);
 	if (!review) {
-		log.log(`ReviewManager.restoreFromSnapshot: re-creating review for ${fsPath}, unresolved=${unresolvedCount}`);
+		logCat("resolve",`ReviewManager.restoreFromSnapshot: re-creating review for ${fsPath}, unresolved=${unresolvedCount}`);
 		review = new FileReview(
 			snapshot.filePath,
 			snapshot.originalContent,
@@ -142,7 +142,7 @@ export function restoreFromSnapshot(mgr: ReviewManagerInternal, fsPath: string, 
 	}
 
 	if (state.activeReviews.has(fsPath)) {
-		log.log(`ReviewManager.restoreFromSnapshot: updating existing review for ${fsPath}, unresolved=${unresolvedCount}`);
+		logCat("resolve",`ReviewManager.restoreFromSnapshot: updating existing review for ${fsPath}, unresolved=${unresolvedCount}`);
 	}
 	review.hunks = JSON.parse(JSON.stringify(snapshot.hunks));
 	(review as FileReview).mergedLines = [...snapshot.mergedLines];
@@ -150,7 +150,7 @@ export function restoreFromSnapshot(mgr: ReviewManagerInternal, fsPath: string, 
 
 	const hunkDetail = review.hunks.map((h) => `${h.id}:${h.resolved ? "R" : "U"}`).join(",");
 	const rangeDetail = (review as FileReview).hunkRanges.map((r) => `h${r.hunkId}@${r.removedStart}-${r.removedEnd}/${r.addedStart}-${r.addedEnd}`).join(", ");
-	log.log(`ReviewManager.restoreFromSnapshot: hunks=[${hunkDetail}], ranges=[${rangeDetail}]`);
+	logCat("resolve",`ReviewManager.restoreFromSnapshot: hunks=[${hunkDetail}], ranges=[${rangeDetail}]`);
 
 	// NOTE: We intentionally do NOT call syncState/refreshUI here.
 	// The caller (undoResolve/redoResolve) will call applyContentViaEdit

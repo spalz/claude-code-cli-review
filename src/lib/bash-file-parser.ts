@@ -7,6 +7,7 @@ export interface BashFileChanges {
 }
 
 const DEV_PATHS = new Set(["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/stdin"]);
+const SHELL_REDIRECT_PATTERN = /^[0-9]*>|2>&1|>&/;
 
 export function parseBashCommand(command: string, workspacePath?: string): BashFileChanges {
 	const deleted: string[] = [];
@@ -117,11 +118,18 @@ function filterArgs(args: string[], flags: string[]): string[] {
 
 function addFile(list: string[], file: string, workspacePath?: string): void {
 	if (!file || DEV_PATHS.has(file)) return;
-	const resolved = path.isAbsolute(file)
-		? file
+	// Skip shell redirects captured as file paths (e.g. "2>/dev/null" split into "2>" and "/dev/null")
+	if (SHELL_REDIRECT_PATTERN.test(file)) return;
+	// Skip paths containing newlines or null bytes
+	if (file.includes("\n") || file.includes("\0")) return;
+	// Normalize trailing slash (e.g. "dest/" → "dest" for cp -r)
+	const clean = file.endsWith("/") ? file.slice(0, -1) : file;
+	if (!clean) return;
+	const resolved = path.isAbsolute(clean)
+		? clean
 		: workspacePath
-			? path.resolve(workspacePath, file)
-			: file;
+			? path.resolve(workspacePath, clean)
+			: clean;
 	if (!list.includes(resolved)) list.push(resolved);
 }
 

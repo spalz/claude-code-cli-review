@@ -5,7 +5,9 @@ import * as log from "../log";
 import * as state from "../state";
 import { isProjectTrusted } from "../claude-settings";
 import { isHookInstalled } from "../hooks";
-import { listSessions, getSessionsDir, loadSessionNames } from "../sessions";
+import { listSessions } from "../sessions";
+import { detectNewSessionId } from "./session-detector";
+import { SessionNameWatcher } from "./session-name-watcher";
 import type { PtyManager } from "../pty-manager";
 import type { ExtensionToWebviewMessage } from "../../types";
 
@@ -14,11 +16,8 @@ export class SessionManager {
 	/** All open claude IDs (real PTY + lazy placeholders). Source of truth for persistence & UI. */
 	private readonly _allOpenClaudeIds = new Set<string>();
 	private _restored = false;
-	private _namesWatcher: fs.FSWatcher | null = null;
-	private _namesDebounce: ReturnType<typeof setTimeout> | null = null;
-	private _cachedNames: Record<string, string> = {};
-	private _jsonlDebounce: ReturnType<typeof setTimeout> | null = null;
 	private _pendingSession: { resumeId?: string; restoring?: boolean } | null = null;
+	private readonly _nameWatcher: SessionNameWatcher;
 
 	constructor(
 		private readonly _wp: string,
@@ -30,6 +29,14 @@ export class SessionManager {
 		// correct "open" indicators before terminals are lazily restored.
 		const saved = this._workspaceState?.get<string[]>("ccr.openSessions") || [];
 		for (const id of saved) this._allOpenClaudeIds.add(id);
+
+		this._nameWatcher = new SessionNameWatcher(this._wp, {
+			postRename: (claudeId, newName) => {
+				this._postMessage({ type: "rename-terminal-tab", claudeId, newName });
+			},
+			refreshSessions: () => this.refreshClaudeSessions(),
+			getOpenIds: () => this._allOpenClaudeIds,
+		});
 	}
 
 	refreshClaudeSessions(): void {
@@ -93,7 +100,20 @@ export class SessionManager {
 		log.log(`startNewClaudeSession: resume=${resumeId || "none"}, pty=${info.id}, ${Date.now() - t0}ms`);
 
 		if (!resumeId) {
-			this._detectNewSessionId(info.id);
+			detectNewSessionId(this._wp, info.id, {
+				isAlreadyBound: (ptyId) => this._ptyToClaudeId.has(ptyId),
+				onDetected: (ptyId, sessionId) => {
+					this._ptyToClaudeId.set(ptyId, sessionId);
+					this._allOpenClaudeIds.add(sessionId);
+					this._persistOpenSessions();
+					this._postMessage({
+						type: "update-terminal-claude-id",
+						sessionId: ptyId,
+						claudeId: sessionId,
+					});
+					this.refreshClaudeSessions();
+				},
+			});
 		}
 	}
 
@@ -131,7 +151,6 @@ export class SessionManager {
 	removeOpenSessionByClaudeId(claudeId: string): void {
 		log.log(`removeOpenSessionByClaudeId: ${claudeId.slice(0, 8)}`);
 		this._allOpenClaudeIds.delete(claudeId);
-		// Also clean up PTY mapping if one exists
 		for (const [ptyId, cId] of this._ptyToClaudeId) {
 			if (cId === claudeId) {
 				this._ptyToClaudeId.delete(ptyId);
@@ -159,16 +178,13 @@ export class SessionManager {
 			`restoreSessions: ${ids.length} sessions to restore: [${ids.join(", ")}], active=${activeClaudeId || "none"}`,
 		);
 
-		// Only start PTY for the active session; others get placeholder tabs
 		const activeId = activeClaudeId && ids.includes(activeClaudeId) ? activeClaudeId : ids[0];
 
-		// Register all IDs as open before starting any PTYs
 		for (const claudeId of ids) {
 			this._allOpenClaudeIds.add(claudeId);
 		}
 
 		for (const claudeId of ids) {
-			// Skip if already opened (e.g., user clicked resume before restore ran)
 			if (this.findPtyByClaudeId(claudeId) !== null) {
 				log.log(`restoreSessions: ${claudeId.slice(0, 8)} already has PTY, skipping`);
 				continue;
@@ -176,11 +192,10 @@ export class SessionManager {
 			if (claudeId === activeId) {
 				this.startNewClaudeSession(claudeId, true);
 			} else {
-				// Send placeholder tab without spawning PTY
 				log.log(`restoreSessions: lazy placeholder for ${claudeId.slice(0, 8)}`);
 				this._postMessage({
 					type: "terminal-session-created",
-					sessionId: -1, // sentinel — no real PTY yet
+					sessionId: -1,
 					name: `resume:${claudeId.slice(0, 8)}`,
 					claudeId,
 					restoring: true,
@@ -193,20 +208,15 @@ export class SessionManager {
 		this.sendOpenSessionIds();
 		log.log(`restoreSessions: ${ids.length} restored (1 active, ${ids.length - 1} lazy) in ${Date.now() - t0}ms`);
 
-		// Activate the real session
 		const activePtyId = this.findPtyByClaudeId(activeId);
 		if (activePtyId !== null) {
 			log.log(`restoreSessions: activating active session pty #${activePtyId}`);
-			this._postMessage({
-				type: "activate-terminal",
-				sessionId: activePtyId,
-			});
+			this._postMessage({ type: "activate-terminal", sessionId: activePtyId });
 		}
 	}
 
 	/** Spawn a real PTY for a lazy placeholder tab */
 	lazyResume(claudeId: string, placeholderPtyId: number): void {
-		// Check not already loaded
 		if (this.findPtyByClaudeId(claudeId) !== null) {
 			log.log(`lazyResume: ${claudeId.slice(0, 8)} already has a PTY, activating`);
 			const ptyId = this.findPtyByClaudeId(claudeId)!;
@@ -228,7 +238,6 @@ export class SessionManager {
 		this._allOpenClaudeIds.add(claudeId);
 		this._persistOpenSessions();
 
-		// Tell webview to replace placeholder with real session
 		this._postMessage({
 			type: "lazy-session-ready",
 			placeholderPtyId,
@@ -244,122 +253,12 @@ export class SessionManager {
 		return this._ptyToClaudeId;
 	}
 
-	private _detectNewSessionId(ptyId: number): void {
-		const sessionsDir = getSessionsDir(this._wp);
-
-		let existingFiles: Set<string>;
-		try {
-			existingFiles = new Set(
-				fs.readdirSync(sessionsDir)
-					.filter((f) => f.endsWith(".jsonl"))
-					.map((f) => f.replace(".jsonl", "")),
-			);
-		} catch {
-			existingFiles = new Set();
-		}
-
-		const createdAt = Date.now();
-
-		const tryDetect = (): boolean => {
-			if (this._ptyToClaudeId.has(ptyId)) return true;
-			try {
-				const files = fs
-					.readdirSync(sessionsDir)
-					.filter((f) => f.endsWith(".jsonl"));
-
-				for (const file of files) {
-					const sessionId = file.replace(".jsonl", "");
-					if (existingFiles.has(sessionId)) continue;
-
-					// Only consider files created/modified after our PTY started
-					const stat = fs.statSync(`${sessionsDir}/${file}`);
-					if (stat.mtimeMs < createdAt - 2000) continue;
-
-					log.log(`detected new claude session: ${sessionId.slice(0, 8)} for pty #${ptyId}`);
-					this._ptyToClaudeId.set(ptyId, sessionId);
-					this._allOpenClaudeIds.add(sessionId);
-					this._persistOpenSessions();
-					this._postMessage({
-						type: "update-terminal-claude-id",
-						sessionId: ptyId,
-						claudeId: sessionId,
-					});
-					this.refreshClaudeSessions();
-					return true;
-				}
-			} catch {}
-			return false;
-		};
-
-		// Poll every 2s for up to 60 seconds
-		let attempts = 0;
-		const interval = setInterval(() => {
-			attempts++;
-			if (attempts > 30 || tryDetect()) {
-				clearInterval(interval);
-				if (attempts > 30) {
-					log.log(`_detectNewSessionId: timed out for pty #${ptyId} after 60s`);
-				}
-			}
-		}, 2000);
-
-		// Also use fs.watch for faster detection
-		try {
-			if (fs.existsSync(sessionsDir)) {
-				const watcher = fs.watch(sessionsDir, (event, filename) => {
-					if (filename?.endsWith(".jsonl") && tryDetect()) {
-						watcher.close();
-						clearInterval(interval);
-					}
-				});
-				// Clean up watcher after timeout
-				setTimeout(() => { try { watcher.close(); } catch {} }, 62000);
-			}
-		} catch {}
-	}
-
-	/** Watch session-names.json and open-session .jsonl files for changes */
 	watchSessionNames(): void {
-		const dir = getSessionsDir(this._wp);
-		try {
-			this._namesWatcher = fs.watch(dir, (_, filename) => {
-				if (filename === "session-names.json") {
-					if (this._namesDebounce) clearTimeout(this._namesDebounce);
-					this._namesDebounce = setTimeout(() => this._syncTabNames(), 300);
-				}
-				// Detect changes to open session .jsonl files (e.g., Claude auto-title via summary)
-				if (filename?.endsWith(".jsonl")) {
-					const sessionId = filename.replace(".jsonl", "");
-					if (this._allOpenClaudeIds.has(sessionId)) {
-						if (this._jsonlDebounce) clearTimeout(this._jsonlDebounce);
-						this._jsonlDebounce = setTimeout(() => this.refreshClaudeSessions(), 2000);
-					}
-				}
-			});
-		} catch {
-			// Directory might not exist yet — watcher will be retried on next session open
-		}
+		this._nameWatcher.start();
 	}
 
 	dispose(): void {
-		this._namesWatcher?.close();
-		this._namesWatcher = null;
-	}
-
-	private _syncTabNames(): void {
-		const names = loadSessionNames(this._wp);
-		for (const claudeId of this._allOpenClaudeIds) {
-			const newName = names[claudeId];
-			if (newName && newName !== this._cachedNames[claudeId]) {
-				log.log(`names-sync: ${claudeId.slice(0, 8)} -> "${newName}"`);
-				this._postMessage({
-					type: "rename-terminal-tab",
-					claudeId,
-					newName,
-				});
-			}
-		}
-		this._cachedNames = names;
+		this._nameWatcher.dispose();
 	}
 
 	private _persistOpenSessions(): void {

@@ -1,8 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("vscode", () => import("./mocks/vscode"));
-vi.mock("../log", () => ({ log: vi.fn() }));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
 vi.mock("../state", () => ({ refreshAll: vi.fn() }));
+vi.mock("../claude-settings", () => ({
+	isProjectTrusted: vi.fn().mockReturnValue(true),
+	trustProject: vi.fn(),
+}));
+vi.mock("../hooks", () => ({
+	isHookInstalled: vi.fn().mockReturnValue(true),
+	installHook: vi.fn(),
+	checkAndPrompt: vi.fn().mockReturnValue("installed"),
+}));
 vi.mock("../sessions", () => ({
 	listSessions: vi.fn().mockReturnValue({ sessions: [], archivedCount: 0 }),
 	getSessionsDir: vi.fn().mockReturnValue("/tmp/sessions"),
@@ -14,6 +23,10 @@ const mockFs = vi.hoisted(() => ({
 	readdirSync: vi.fn().mockReturnValue([]),
 	statSync: vi.fn(),
 	watch: vi.fn().mockReturnValue({ close: vi.fn() }),
+	existsSync: vi.fn().mockReturnValue(true),
+	writeFileSync: vi.fn(),
+	mkdirSync: vi.fn(),
+	unlinkSync: vi.fn(),
 }));
 vi.mock("fs", () => mockFs);
 

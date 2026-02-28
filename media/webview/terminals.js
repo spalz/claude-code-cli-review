@@ -31,7 +31,7 @@
 	var CTRL_C_DEBOUNCE_MS = 2000;
 	var LOADING_OVERLAY_TIMEOUT_MS = 15000;
 	var SCROLLBACK_LINES = 10000;
-	var SCROLL_BOTTOM_THRESHOLD = 5;
+	var SCROLL_BOTTOM_THRESHOLD = 20;
 	// Idle timeout to detect "loading complete" after resume.
 	// After last terminal-output chunk, wait this long before declaring load done.
 	var LOAD_IDLE_MS = 2000;
@@ -522,6 +522,127 @@
 		}
 	}
 
+	/** Register link provider for multi-line Write/Edit/Read file paths (Bug #4) */
+	function registerWrappedPathLinkProvider(term) {
+		var toolCallRegex = /(?:Write|Edit|Read)\(/g;
+
+		function getLine(buf, row) {
+			var line = buf.getLine(row);
+			return line ? line.translateToString(true) : "";
+		}
+
+		try {
+			term.registerLinkProvider({
+				provideLinks: function (y, callback) {
+					var buf = term.buffer.active;
+					var row = y - 1;
+					var text = getLine(buf, row);
+					if (!text) return callback(undefined);
+
+					var links = [];
+
+					// Forward scan: this line has Write(/Edit(/Read( with unclosed paren
+					toolCallRegex.lastIndex = 0;
+					var m;
+					while ((m = toolCallRegex.exec(text)) !== null) {
+						var pathStart = m.index + m[0].length;
+						var rest = text.substring(pathStart);
+						if (rest.indexOf(")") !== -1) continue; // closed on same line
+
+						var fullPath = rest;
+						var endRow = row;
+						var endCol = text.length;
+						for (var r = row + 1; r < Math.min(row + 6, buf.length); r++) {
+							var nextText = getLine(buf, r);
+							var trimmed = nextText.trim();
+							if (!trimmed) break;
+							var cp = trimmed.indexOf(")");
+							if (cp !== -1) {
+								fullPath += trimmed.substring(0, cp);
+								endRow = r;
+								endCol = nextText.indexOf(")");
+								break;
+							}
+							fullPath += trimmed;
+							endRow = r;
+							endCol = nextText.length;
+						}
+
+						fullPath = fullPath.replace(/\s+/g, "").trim();
+						if (!fullPath || fullPath.indexOf("/") === -1) continue;
+
+						var filePath = fullPath;
+						var ln, col;
+						var lm = filePath.match(/:(\d+)(?::(\d+))?$/);
+						if (lm) {
+							filePath = filePath.substring(0, lm.index);
+							ln = +lm[1];
+							col = lm[2] ? +lm[2] : undefined;
+						}
+
+						(function (fp, l, c, sx, sy, ex, ey) {
+							links.push({
+								range: { start: { x: sx, y: sy }, end: { x: ex + 1, y: ey + 1 } },
+								text: fp,
+								activate: function () {
+									send("open-file-link", { path: fp, line: l, column: c });
+								}
+							});
+						})(filePath, ln, col, pathStart + 1, y, endCol, endRow);
+					}
+
+					// Backward scan: this line is a continuation of a tool call from above
+					if (!links.length && text.trim()) {
+						for (var pr = row - 1; pr >= Math.max(0, row - 5); pr--) {
+							var prevText = getLine(buf, pr);
+							toolCallRegex.lastIndex = 0;
+							var pm = toolCallRegex.exec(prevText);
+							if (pm && prevText.indexOf(")", pm.index + pm[0].length) === -1) {
+								// Found unclosed tool call — build full path from pm line through current
+								var fp2 = prevText.substring(pm.index + pm[0].length);
+								var eRow = pr;
+								var eCol = prevText.length;
+								for (var r2 = pr + 1; r2 <= Math.min(row + 3, buf.length - 1); r2++) {
+									var lt = getLine(buf, r2);
+									var t2 = lt.trim();
+									if (!t2) break;
+									var cp2 = t2.indexOf(")");
+									if (cp2 !== -1) {
+										fp2 += t2.substring(0, cp2);
+										eRow = r2;
+										eCol = lt.indexOf(")");
+										break;
+									}
+									fp2 += t2;
+									eRow = r2;
+									eCol = lt.length;
+								}
+								fp2 = fp2.replace(/\s+/g, "").trim();
+								if (fp2 && fp2.indexOf("/") !== -1) {
+									var lm2 = fp2.match(/:(\d+)(?::(\d+))?$/);
+									var f = fp2, l2, c2;
+									if (lm2) { f = fp2.substring(0, lm2.index); l2 = +lm2[1]; c2 = lm2[2] ? +lm2[2] : undefined; }
+									(function (fp, l, c, sx, sy, ex, ey) {
+										links.push({
+											range: { start: { x: sx, y: sy }, end: { x: ex + 1, y: ey + 1 } },
+											text: fp,
+											activate: function () { send("open-file-link", { path: fp, line: l, column: c }); }
+										});
+									})(f, l2, c2, pm.index + pm[0].length + 1, pr + 1, eCol, eRow);
+								}
+								break;
+							}
+						}
+					}
+
+					callback(links.length ? links : undefined);
+				}
+			});
+		} catch (err) {
+			diagLog("links", "wrappedPathProvider-FAILED", { error: String(err) });
+		}
+	}
+
 	/** Wire up onData (slash guard, input forwarding), onScroll, onResize */
 	function setupDataHandler(term, sessionRef, entry) {
 		var cmdBuf = "";
@@ -603,6 +724,7 @@
 		var xt = createXterm(container);
 		registerFileLinkProvider(xt.term);
 		registerWrappedUrlLinkProvider(xt.term);
+		registerWrappedPathLinkProvider(xt.term);
 		registerImageLinkProvider(xt.term);
 		setupKeyHandler(xt.term, sessionRef);
 		blockXtermPaste(xt.term);
@@ -626,6 +748,11 @@
 		terminals.set(id, entry);
 
 		setupDataHandler(xt.term, sessionRef, entry);
+
+		// Push prompt below review toolbar overlay (position:absolute, ~37px tall).
+		// Unconditional: 2 blank lines are harmless when toolbar is hidden,
+		// and necessary when it's visible (toolbar state may not be set yet).
+		xt.term.write("\r\n\r\n");
 
 		diagLog("terminal", "created", {
 			id: id, name: displayName, claudeId: claudeId, total: terminals.size, silent: !!silent

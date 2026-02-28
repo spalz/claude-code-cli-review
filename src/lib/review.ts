@@ -4,6 +4,7 @@ import * as path from "path";
 import { execSync } from "child_process";
 import type { ChangeType, Hunk, HunkRange, MergedResult, IFileReview } from "../types";
 import { computeDiff } from "./diff";
+import { logCat } from "./log";
 import * as state from "./state";
 
 export class FileReview implements IFileReview {
@@ -58,15 +59,11 @@ export function buildMergedContent(modifiedLines: string[], hunks: Hunk[]): Merg
 			const lines = hunk.accepted ? hunk.added : hunk.removed;
 			for (const line of lines) result.push(line);
 		} else {
-			// Hover-based approach: only added lines go into the buffer.
-			// Removed lines are shown via hover decorations, keeping the buffer clean.
-			// Exception: pure-delete hunks (added=[], removed=[...]) — show removed
-			// lines in buffer so the user can see what's being deleted.
-			const isPureDeletion = hunk.added.length === 0 && hunk.removed.length > 0;
+			// Inline diff approach: both removed and added lines go into the buffer.
+			// Removed lines are shown with red background, added with green.
+			// This gives the user a complete diff view inline.
 			const removedStart = result.length;
-			if (isPureDeletion) {
-				for (const line of hunk.removed) result.push(line);
-			}
+			for (const line of hunk.removed) result.push(line);
 			const removedEnd = result.length;
 			const addedStart = result.length;
 			for (const line of hunk.added) result.push(line);
@@ -104,12 +101,16 @@ export async function enterReviewMode(
 			timeout: 5000,
 			stdio: "pipe",
 		});
-	} catch {}
+		logCat("review", `enterReviewMode: git show HEAD for ${relPath} → ${originalContent.length} chars`);
+	} catch (err) {
+		logCat("review", `enterReviewMode: git show HEAD failed for ${relPath}: ${(err as Error).message} (treating as new file)`);
+	}
 
 	let modifiedContent = "";
 	try {
 		modifiedContent = fs.readFileSync(filePath, "utf8");
-	} catch {
+	} catch (err) {
+		logCat("review", `enterReviewMode: cannot read ${filePath}: ${(err as Error).message}`);
 		return null;
 	}
 
@@ -122,10 +123,16 @@ export function createReview(
 	modifiedContent: string,
 	workspacePath: string,
 ): FileReview | null {
-	if (originalContent === modifiedContent) return null;
+	if (originalContent === modifiedContent) {
+		logCat("review", `createReview: no change for ${filePath} (${originalContent.length} chars)`);
+		return null;
+	}
 
 	const hunks = computeDiff(originalContent, modifiedContent, filePath, workspacePath);
-	if (hunks.length === 0) return null;
+	if (hunks.length === 0) {
+		logCat("review", `createReview: 0 hunks for ${filePath} (whitespace-only diff?)`);
+		return null;
+	}
 
 	const modLines = modifiedContent.split("\n");
 	const { lines, ranges } = buildMergedContent(modLines, hunks);
@@ -134,15 +141,22 @@ export function createReview(
 	review.mergedLines = lines;
 	review.hunkRanges = ranges;
 	state.activeReviews.set(filePath, review);
+	logCat("review", `createReview: ${filePath} — ${hunks.length} hunks, type=${review.changeType}, mergedLines=${lines.length}, ranges=${ranges.length}`);
 	return review;
 }
 
 export function buildFinalContent(review: IFileReview): string {
 	const allAccepted = review.hunks.every((h) => h.accepted);
-	if (allAccepted) return review.modifiedContent;
+	if (allAccepted) {
+		logCat("review", `buildFinalContent: all accepted → using modifiedContent (${review.modifiedContent.length} chars)`);
+		return review.modifiedContent;
+	}
 
 	const allRejected = review.hunks.every((h) => !h.accepted);
-	if (allRejected) return review.originalContent;
+	if (allRejected) {
+		logCat("review", `buildFinalContent: all rejected → using originalContent (${review.originalContent.length} chars)`);
+		return review.originalContent;
+	}
 
 	const origLines = review.originalContent.split("\n");
 	const result: string[] = [];
@@ -163,7 +177,11 @@ export function buildFinalContent(review: IFileReview): string {
 		result.push(origLines[oi]);
 		oi++;
 	}
-	return result.join("\n");
+	const finalContent = result.join("\n");
+	const accepted = review.hunks.filter((h) => h.accepted).length;
+	const rejected = review.hunks.filter((h) => !h.accepted).length;
+	logCat("review", `buildFinalContent: mixed — ${accepted} accepted, ${rejected} rejected → ${finalContent.length} chars`);
+	return finalContent;
 }
 
 export function rebuildMerged(review: FileReview): void {

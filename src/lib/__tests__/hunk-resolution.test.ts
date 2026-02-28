@@ -1,4 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("vscode", () => import("./mocks/vscode"));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
+
 import { buildMergedContent } from "../review";
 import type { Hunk } from "../../types";
 

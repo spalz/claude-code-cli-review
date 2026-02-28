@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("vscode", () => import("./mocks/vscode"));
-vi.mock("../log", () => ({ log: vi.fn() }));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
 vi.mock("child_process", () => ({ execSync: vi.fn() }));
 
 import { FileReview, buildMergedContent, buildFinalContent, rebuildMerged } from "../review";

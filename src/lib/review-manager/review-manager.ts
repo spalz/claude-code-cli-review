@@ -1,7 +1,7 @@
 // ReviewManager — central orchestrator for review lifecycle (thin delegation layer)
 import * as vscode from "vscode";
 import * as fs from "fs";
-import * as log from "../log";
+import { log, logCat } from "../log";
 import * as state from "../state";
 import { saveReviewState } from "../persistence";
 import { clearAllHistories } from "../undo-history";
@@ -9,7 +9,7 @@ import type { ICodeLensProvider, IMainView, ReviewManagerInternal } from "./type
 import { addFile as addFileImpl } from "./file-addition";
 import { applyContentViaEdit } from "./content-application";
 import { resolveHunk as resolveHunkImpl, resolveAllHunks as resolveAllHunksImpl } from "./hunk-resolution";
-import { navigateHunk as navigateHunkImpl, navigateFile as navigateFileImpl, reviewNextUnresolved as reviewNextUnresolvedImpl, openCurrentOrNext as openCurrentOrNextImpl, openFileForReview as openFileForReviewImpl } from "./navigation";
+import { clampFileIndex, navigateHunk as navigateHunkImpl, navigateFile as navigateFileImpl, reviewNextUnresolved as reviewNextUnresolvedImpl, openCurrentOrNext as openCurrentOrNextImpl, openFileForReview as openFileForReviewImpl } from "./navigation";
 import { undoResolve as undoResolveImpl, redoResolve as redoResolveImpl, restoreFromSnapshot as restoreFromSnapshotImpl } from "./undo-redo";
 import { restore as restoreImpl } from "./persistence";
 import * as queries from "./queries";
@@ -39,14 +39,16 @@ export class ReviewManager implements vscode.Disposable {
 		const prev = this._opQueue;
 		const next = prev.then(async () => {
 			const waited = performance.now() - tEnqueue;
-			if (waited > 5) log.log(`serialized: waited ${waited.toFixed(1)}ms in queue`);
+			if (waited > 5) logCat("resolve", `serialized: waited ${waited.toFixed(1)}ms in queue`);
 			await fn();
 		}, async () => {
 			const waited = performance.now() - tEnqueue;
-			if (waited > 5) log.log(`serialized: waited ${waited.toFixed(1)}ms in queue (prev failed)`);
+			if (waited > 5) logCat("resolve", `serialized: waited ${waited.toFixed(1)}ms in queue (prev failed)`);
 			await fn();
 		});
-		this._opQueue = next.then(() => {}, () => {});
+		this._opQueue = next.then(() => {}, (err) => {
+			logCat("resolve", `serialized: operation failed: ${(err as Error).message}`);
+		});
 		return next;
 	}
 
@@ -55,9 +57,13 @@ export class ReviewManager implements vscode.Disposable {
 
 	/** Run fn while suppressing onDidChangeActiveTextEditor processing */
 	async withSuppressedTabSwitch<T>(fn: () => Promise<T>): Promise<T> {
+		logCat("focus", `withSuppressedTabSwitch: ON`);
 		this._suppressTabSwitch = true;
 		try { return await fn(); }
-		finally { this._suppressTabSwitch = false; }
+		finally {
+			this._suppressTabSwitch = false;
+			logCat("focus", `withSuppressedTabSwitch: OFF`);
+		}
 	}
 
 	// --- Internal interface cast ---
@@ -75,14 +81,20 @@ export class ReviewManager implements vscode.Disposable {
 	// --- Content validation ---
 	async ensureMergedContent(filePath: string): Promise<void> {
 		const review = state.activeReviews.get(filePath);
-		if (!review) return;
+		if (!review) {
+			logCat("content", `ensureMergedContent: no review for ${filePath}, skipping`);
+			return;
+		}
 		const editor = vscode.window.visibleTextEditors.find(
 			(e) => e.document.uri.fsPath === filePath,
 		);
-		if (!editor) return;
+		if (!editor) {
+			logCat("content", `ensureMergedContent: no visible editor for ${filePath}, skipping`);
+			return;
+		}
 		const mergedContent = review.mergedLines.join("\n");
 		if (editor.document.getText() !== mergedContent) {
-			log.log(`ensureMergedContent: content mismatch for ${filePath}, reapplying`);
+			logCat("content", `ensureMergedContent: content mismatch for ${filePath} (bufferLen=${editor.document.getText().length}, mergedLen=${mergedContent.length}), reapplying`);
 			await applyContentViaEdit(this.internal, filePath, mergedContent);
 		}
 	}
@@ -133,7 +145,11 @@ export class ReviewManager implements vscode.Disposable {
 		saveReviewState(this.wp, state.activeReviews, this.currentFileIndex);
 	}
 
-	async restore(): Promise<boolean> { return restoreImpl(this.internal); }
+	async restore(): Promise<boolean> {
+		const ok = await restoreImpl(this.internal);
+		clampFileIndex(this.internal);
+		return ok;
+	}
 
 	// --- State sync ---
 	syncState(): void {
@@ -148,18 +164,20 @@ export class ReviewManager implements vscode.Disposable {
 		this.mainView?.update();
 		// NOTE: state.refreshReview() intentionally NOT called here — it would
 		// trigger codeLens.refresh() + mainView.update() a second time via baseRefresh().
-		log.log(`ReviewManager.refreshUI: ${(performance.now() - t0).toFixed(1)}ms`);
+		logCat("review", `ReviewManager.refreshUI: ${(performance.now() - t0).toFixed(1)}ms`);
 	}
 
 	// --- Disposal ---
 	dispose(): void {
 		const count = state.activeReviews.size;
-		log.log(`ReviewManager.dispose: restoring ${count} files to modifiedContent`);
+		logCat("review", `ReviewManager.dispose: restoring ${count} files to modifiedContent`);
 		for (const [fp, review] of state.activeReviews) {
 			try {
 				fs.writeFileSync(fp, review.modifiedContent, "utf8");
-				log.log(`ReviewManager.dispose: restored ${fp}`);
-			} catch {}
+				logCat("review", `ReviewManager.dispose: restored ${fp} (${review.modifiedContent.length} chars)`);
+			} catch (err) {
+				logCat("review", `ReviewManager.dispose: FAILED to restore ${fp}: ${(err as Error).message}`);
+			}
 		}
 		this.saveNow();
 		if (this.persistTimer) {

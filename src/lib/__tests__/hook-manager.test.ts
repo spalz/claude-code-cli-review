@@ -10,7 +10,7 @@ const mockFs = vi.hoisted(() => ({
 
 vi.mock("fs", () => mockFs);
 vi.mock("vscode", () => import("./mocks/vscode"));
-vi.mock("../log", () => ({ log: vi.fn() }));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
 
 import {
 	getPostHookScript,
@@ -20,26 +20,27 @@ import {
 	isHookInstalled,
 	checkAndPrompt,
 } from "../hooks";
+import { HOOK_VERSION } from "../hooks/constants";
 
 beforeEach(() => {
 	vi.clearAllMocks();
 });
 
 describe("hook scripts", () => {
-	it("getPostHookScript contains HOOK_VERSION 8.0", () => {
-		expect(getPostHookScript()).toContain("v8.0");
+	it("getPostHookScript contains current HOOK_VERSION", () => {
+		expect(getPostHookScript()).toContain(`v${HOOK_VERSION}`);
 	});
 
 	it("getPostHookScript contains curl to /changed", () => {
-		expect(getPostHookScript()).toContain("27182/changed");
+		expect(getPostHookScript()).toContain("/changed");
 	});
 
 	it("getPreHookScript contains curl to /snapshot", () => {
-		expect(getPreHookScript()).toContain("27182/snapshot");
+		expect(getPreHookScript()).toContain("/snapshot");
 	});
 
-	it("getPreHookScript contains base64 encoding", () => {
-		expect(getPreHookScript()).toMatch(/base64 < "\$FILE_PATH"/);
+	it("getPreHookScript uses Python for base64 encoding", () => {
+		expect(getPreHookScript()).toContain("base64");
 	});
 
 	it("both scripts filter by Edit|Write", () => {
@@ -50,29 +51,27 @@ describe("hook scripts", () => {
 	});
 
 	it("postHookScript contains Bash branch", () => {
-		expect(getPostHookScript()).toContain('"Bash"');
+		expect(getPostHookScript()).toContain("Bash");
 	});
 
 	it("preHookScript contains Bash branch", () => {
-		expect(getPreHookScript()).toContain('"Bash"');
+		expect(getPreHookScript()).toContain("Bash");
 	});
 
-	it("postHookScript Bash branch sends command in JSON", () => {
+	it("postHookScript uses json.dumps for safe JSON output", () => {
 		const script = getPostHookScript();
-		expect(script).toContain("'tool':'Bash'");
-		expect(script).toContain("'command':cmd");
+		expect(script).toContain("json.dumps");
 	});
 
-	it("preHookScript Bash branch sends to /snapshot", () => {
+	it("preHookScript uses json.dumps for safe JSON output", () => {
 		const script = getPreHookScript();
-		expect(script).toContain("27182/snapshot");
-		expect(script).toContain("'tool':'Bash'");
+		expect(script).toContain("json.dumps");
 	});
 
 	it("getNotifyHookScript posts to /notify endpoint", () => {
 		const script = getNotifyHookScript();
-		expect(script).toContain("v8.0");
-		expect(script).toContain("127.0.0.1:27182/notify");
+		expect(script).toContain(`v${HOOK_VERSION}`);
+		expect(script).toContain("/notify");
 		expect(script).toContain("curl");
 		expect(script).not.toContain("osascript");
 		expect(script).not.toContain("notify-send");

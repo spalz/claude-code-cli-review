@@ -10,7 +10,7 @@ const mockFs = vi.hoisted(() => ({
 
 vi.mock("fs", () => mockFs);
 vi.mock("vscode", () => import("./mocks/vscode"));
-vi.mock("../log", () => ({ log: vi.fn() }));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
 
 import { saveReviewState, loadReviewState, clearReviewState } from "../persistence";
 import type { IFileReview } from "../../types";

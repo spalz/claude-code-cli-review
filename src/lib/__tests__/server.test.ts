@@ -5,7 +5,7 @@ import { EventEmitter } from "events";
 let requestHandler: (req: any, res: any) => void;
 
 vi.mock("vscode", () => import("./mocks/vscode"));
-vi.mock("../log", () => ({ log: vi.fn() }));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
 vi.mock("child_process", () => ({ execSync: vi.fn(() => "") }));
 vi.mock("fs", () => ({ readFileSync: vi.fn(() => "file-content") }));
 vi.mock("http", () => ({
@@ -131,22 +131,23 @@ describe("POST /snapshot", () => {
 		expect(getSnapshot("/missing.ts")).toBeUndefined();
 	});
 
-	it("returns ok on malformed JSON", async () => {
+	it("returns error on malformed JSON", async () => {
 		const req = createMockReq("POST", "/snapshot", "not-json");
 		const res = createMockRes();
 		requestHandler(req, res);
 		await new Promise((r) => setTimeout(r, 10));
 		const body = JSON.parse(res.end.mock.calls[0][0]);
-		expect(body.ok).toBe(true);
+		expect(body.ok).toBe(false);
+		expect(body.error).toBeDefined();
 	});
 });
 
 describe("POST /changed", () => {
-	it("calls addFileToReview handler with file path", async () => {
+	it("calls addFileToReview handler with file path and session", async () => {
 		const handler = vi.fn();
 		setAddFileHandler(handler);
 		await sendRequest("POST", "/changed", { file: "/changed.ts", tool: "Edit" });
-		expect(handler).toHaveBeenCalledWith("/changed.ts");
+		expect(handler).toHaveBeenCalledWith("/changed.ts", undefined);
 	});
 
 	it("handles Bash tool with parseBashCommand", async () => {
@@ -158,8 +159,8 @@ describe("POST /changed", () => {
 			created: [],
 		});
 		await sendRequest("POST", "/changed", { tool: "Bash", command: "sed -i file" });
-		expect(handler).toHaveBeenCalledWith("/a.ts");
-		expect(handler).toHaveBeenCalledWith("/b.ts");
+		expect(handler).toHaveBeenCalledWith("/a.ts", undefined);
+		expect(handler).toHaveBeenCalledWith("/b.ts", undefined);
 	});
 
 	it("does not call handler when file is missing and tool is not Bash", async () => {
@@ -169,13 +170,14 @@ describe("POST /changed", () => {
 		expect(handler).not.toHaveBeenCalled();
 	});
 
-	it("returns ok on malformed JSON", async () => {
+	it("returns error on malformed JSON", async () => {
 		const req = createMockReq("POST", "/changed", "bad-json");
 		const res = createMockRes();
 		requestHandler(req, res);
 		await new Promise((r) => setTimeout(r, 10));
 		const body = JSON.parse(res.end.mock.calls[0][0]);
-		expect(body.ok).toBe(true);
+		expect(body.ok).toBe(false);
+		expect(body.error).toBeDefined();
 	});
 });
 

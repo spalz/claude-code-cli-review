@@ -19,34 +19,43 @@ CCR_PORT=$(cat "$CCR_PORT_FILE")
 echo "[ccr-hook] $(date +%H:%M:%S) port=$CCR_PORT" >> "$LOG"
 
 INPUT=$(cat)
-echo "[ccr-hook] $(date +%H:%M:%S) raw input: $INPUT" >> "$LOG"
+echo "[ccr-hook] $(date +%H:%M:%S) raw input length: \${#INPUT}" >> "$LOG"
 
-TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
-FILE_PATH=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path',''))" 2>/dev/null || echo "")
+# Single Python call — parses JSON and produces properly escaped payload via json.dumps()
+PAYLOAD=$(echo "$INPUT" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    tool = d.get('tool_name', '')
+    if tool in ('Edit', 'Write'):
+        fp = d.get('tool_input', {}).get('file_path', '')
+        if fp:
+            print(json.dumps({'file': fp, 'tool': tool}))
+    elif tool == 'Bash':
+        cmd = d.get('tool_input', {}).get('command', '')
+        print(json.dumps({'tool': 'Bash', 'command': cmd}))
+except Exception as e:
+    print('[ccr-hook] python error: ' + str(e), file=sys.stderr)
+    sys.exit(1)
+" 2>>"$LOG")
 
-echo "[ccr-hook] $(date +%H:%M:%S) tool=$TOOL_NAME file=$FILE_PATH" >> "$LOG"
-
-if [[ "$TOOL_NAME" == "Edit" || "$TOOL_NAME" == "Write" ]]; then
-  if [[ -z "$FILE_PATH" ]]; then
-    echo "[ccr-hook] $(date +%H:%M:%S) skip: empty file path" >> "$LOG"
-    exit 0
-  fi
-  RESPONSE=$(curl -sf -w "\\n%{http_code}" -X POST -H "Content-Type: application/json" \\
-    -d "{\\"file\\":\\"$FILE_PATH\\",\\"tool\\":\\"$TOOL_NAME\\"}" \\
-    http://127.0.0.1:$CCR_PORT/changed 2>&1)
-  CURL_EXIT=$?
-  echo "[ccr-hook] $(date +%H:%M:%S) curl exit=$CURL_EXIT response=$RESPONSE" >> "$LOG"
-elif [[ "$TOOL_NAME" == "Bash" ]]; then
-  echo "[ccr-hook] $(date +%H:%M:%S) Bash tool detected, sending command" >> "$LOG"
-  echo "$INPUT" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-cmd=d.get('tool_input',{}).get('command','')
-print(json.dumps({'tool':'Bash','command':cmd}))
-" 2>/dev/null | curl -sf -X POST -H "Content-Type: application/json" -d @- http://127.0.0.1:$CCR_PORT/changed >/dev/null 2>&1
-else
-  echo "[ccr-hook] $(date +%H:%M:%S) skip: tool is not Edit/Write/Bash" >> "$LOG"
+PYTHON_EXIT=$?
+if [[ $PYTHON_EXIT -ne 0 ]]; then
+  echo "[ccr-hook] $(date +%H:%M:%S) skip: python parse failed (exit=$PYTHON_EXIT)" >> "$LOG"
+  exit 0
 fi
+
+if [[ -z "$PAYLOAD" ]]; then
+  echo "[ccr-hook] $(date +%H:%M:%S) skip: no payload (unsupported tool or empty path)" >> "$LOG"
+  exit 0
+fi
+
+echo "[ccr-hook] $(date +%H:%M:%S) sending payload: $PAYLOAD" >> "$LOG"
+RESPONSE=$(curl -sf -w "\\n%{http_code}" -X POST -H "Content-Type: application/json" \\
+  -d "$PAYLOAD" \\
+  http://127.0.0.1:$CCR_PORT/changed 2>&1)
+CURL_EXIT=$?
+echo "[ccr-hook] $(date +%H:%M:%S) curl exit=$CURL_EXIT response=$RESPONSE" >> "$LOG"
 
 exit 0
 `;
@@ -72,33 +81,48 @@ echo "[ccr-pre-hook] $(date +%H:%M:%S) port=$CCR_PORT" >> "$LOG"
 
 INPUT=$(cat)
 
-TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
-FILE_PATH=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path',''))" 2>/dev/null || echo "")
+# Single Python call — parses JSON, reads file content, produces escaped payload
+PAYLOAD=$(echo "$INPUT" | python3 -c "
+import sys, json, os, base64
+try:
+    d = json.load(sys.stdin)
+    tool = d.get('tool_name', '')
+    if tool in ('Edit', 'Write'):
+        fp = d.get('tool_input', {}).get('file_path', '')
+        if not fp:
+            sys.exit(0)
+        content = ''
+        if os.path.isfile(fp):
+            with open(fp, 'rb') as f:
+                content = base64.b64encode(f.read()).decode()
+        print(json.dumps({'file': fp, 'content': content}))
+    elif tool == 'Bash':
+        cmd = d.get('tool_input', {}).get('command', '')
+        print(json.dumps({'tool': 'Bash', 'command': cmd}))
+    else:
+        sys.exit(0)
+except Exception as e:
+    print('[ccr-pre-hook] python error: ' + str(e), file=sys.stderr)
+    sys.exit(1)
+" 2>>"$LOG")
 
-echo "[ccr-pre-hook] $(date +%H:%M:%S) tool=$TOOL_NAME file=$FILE_PATH" >> "$LOG"
-
-if [[ "$TOOL_NAME" == "Edit" || "$TOOL_NAME" == "Write" ]]; then
-  if [[ -z "$FILE_PATH" ]]; then
-    exit 0
-  fi
-  if [[ -f "$FILE_PATH" ]]; then
-    CONTENT=$(base64 < "$FILE_PATH")
-  else
-    CONTENT=""
-  fi
-  curl -sf -X POST -H "Content-Type: application/json" \\
-    -d "{\\"file\\":\\"$FILE_PATH\\",\\"content\\":\\"$CONTENT\\"}" \\
-    http://127.0.0.1:$CCR_PORT/snapshot >/dev/null 2>&1
-  echo "[ccr-pre-hook] $(date +%H:%M:%S) snapshot sent for $FILE_PATH" >> "$LOG"
-elif [[ "$TOOL_NAME" == "Bash" ]]; then
-  echo "$INPUT" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-cmd=d.get('tool_input',{}).get('command','')
-print(json.dumps({'tool':'Bash','command':cmd}))
-" 2>/dev/null | curl -sf -X POST -H "Content-Type: application/json" -d @- http://127.0.0.1:$CCR_PORT/snapshot >/dev/null 2>&1
-  echo "[ccr-pre-hook] $(date +%H:%M:%S) Bash snapshot sent" >> "$LOG"
+PYTHON_EXIT=$?
+if [[ $PYTHON_EXIT -ne 0 ]]; then
+  echo "[ccr-pre-hook] $(date +%H:%M:%S) skip: python parse failed (exit=$PYTHON_EXIT)" >> "$LOG"
+  exit 0
 fi
+
+if [[ -z "$PAYLOAD" ]]; then
+  echo "[ccr-pre-hook] $(date +%H:%M:%S) skip: no payload" >> "$LOG"
+  exit 0
+fi
+
+echo "[ccr-pre-hook] $(date +%H:%M:%S) sending snapshot" >> "$LOG"
+curl -sf -X POST -H "Content-Type: application/json" \\
+  -d "$PAYLOAD" \\
+  http://127.0.0.1:$CCR_PORT/snapshot >>"$LOG" 2>&1
+echo "[ccr-pre-hook] $(date +%H:%M:%S) snapshot sent" >> "$LOG"
+
 exit 0
 `;
 }

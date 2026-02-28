@@ -2,7 +2,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
-import * as log from "../log";
+import { log, logCat } from "../log";
 import { fileLog } from "../file-logger";
 import * as state from "../state";
 import { getSnapshot, clearSnapshot } from "../server";
@@ -15,12 +15,18 @@ import type { ReviewManagerInternal } from "./types";
 export async function addFile(mgr: ReviewManagerInternal, absFilePath: string, sessionId?: string): Promise<void> {
 	fileLog.log("review", `addFile: ${absFilePath}`);
 
+	// Reject clearly invalid paths before any file operations
+	if (!absFilePath || absFilePath.endsWith("/") || absFilePath.includes("\n") || absFilePath.includes("\0")) {
+		logCat("file-add", `rejecting invalid path: "${absFilePath}"`);
+		return;
+	}
+
 	// Read modified content from disk
 	let modifiedContent: string;
 	try {
 		modifiedContent = fs.readFileSync(absFilePath, "utf8");
-	} catch {
-		// File doesn't exist — possibly deleted via Bash rm
+	} catch (err) {
+		logCat("file-add", `cannot read ${absFilePath}: ${(err as Error).message} — treating as deletion`);
 		await handleMissingFile(mgr, absFilePath, sessionId);
 		return;
 	}
@@ -31,7 +37,7 @@ export async function addFile(mgr: ReviewManagerInternal, absFilePath: string, s
 	const originalContent = getOriginalContent(mgr, absFilePath, existingOriginal);
 
 	if (originalContent === modifiedContent) {
-		// No actual change — remove from review if present
+		logCat("file-add", `no change: original === modified for ${absFilePath} (${originalContent.length} chars)`);
 		if (state.activeReviews.has(absFilePath)) {
 			state.activeReviews.delete(absFilePath);
 			mgr.reviewFiles = mgr.reviewFiles.filter((f) => f !== absFilePath);
@@ -53,9 +59,11 @@ export async function addFile(mgr: ReviewManagerInternal, absFilePath: string, s
 		state.activeReviews.delete(absFilePath);
 	}
 
+	logCat("file-add", `${absFilePath}: changeType=${changeType}, original=${originalContent.length}chars, modified=${modifiedContent.length}chars`);
+
 	const hunks = computeDiff(originalContent, modifiedContent, absFilePath, mgr.wp);
 	if (hunks.length === 0) {
-		log.log(`ReviewManager.addFile: no reviewable hunks in ${absFilePath}`);
+		logCat("file-add", `SKIP ${absFilePath}: computeDiff returned 0 hunks (original and modified may differ only in whitespace or formatting)`);
 		return;
 	}
 
@@ -91,9 +99,7 @@ export async function addFile(mgr: ReviewManagerInternal, absFilePath: string, s
 	mgr.syncState();
 	mgr.refreshUI();
 
-	log.log(
-		`ReviewManager.addFile: added ${absFilePath}, ${hunks.length} hunks, type=${changeType}, session=${sessionId ?? "none"}`,
-	);
+	logCat("file-add", `ADDED ${absFilePath}: ${hunks.length} hunks, type=${changeType}, mergedLines=${lines.length}, ranges=${ranges.length}, session=${sessionId ?? "none"}`);
 	mgr.scheduleSave();
 	mgr._onReviewStateChange.fire(true);
 }
@@ -105,6 +111,8 @@ export async function handleMissingFile(mgr: ReviewManagerInternal, absFilePath:
 	const origContent = snapshot ?? existingOrig;
 
 	if (origContent) {
+		const source = snapshot ? "snapshot" : "existingReview";
+		logCat("file-add", `handleMissingFile: ${absFilePath} — found original via ${source} (${origContent.length} chars), treating as deletion`);
 		await handleDeletion(mgr, absFilePath, origContent, sessionId);
 		return;
 	}
@@ -119,12 +127,16 @@ export async function handleMissingFile(mgr: ReviewManagerInternal, absFilePath:
 				timeout: 5000,
 				stdio: "pipe",
 			});
+			logCat("file-add", `handleMissingFile: ${absFilePath} — found via git show HEAD (${gitContent.length} chars)`);
 			await handleDeletion(mgr, absFilePath, gitContent, sessionId);
 			return;
 		}
-	} catch {}
+		logCat("file-add", `handleMissingFile: ${absFilePath} — outside workspace (relPath=${relPath}), cannot git show`);
+	} catch (err) {
+		logCat("file-add", `handleMissingFile: ${absFilePath} — git show HEAD failed: ${(err as Error).message}`);
+	}
 
-	log.log(`ReviewManager.addFile: cannot read ${absFilePath}`);
+	logCat("file-add", `handleMissingFile: ${absFilePath} — no original found (no snapshot, no existing review, no git), skipping`);
 }
 
 export async function handleDeletion(mgr: ReviewManagerInternal, absFilePath: string, originalContent: string, sessionId?: string): Promise<void> {
@@ -174,24 +186,22 @@ export async function handleDeletion(mgr: ReviewManagerInternal, absFilePath: st
 	mgr.syncState();
 	mgr.refreshUI();
 
-	log.log(`ReviewManager.handleDeletion: ${absFilePath}, type=delete`);
+	logCat("file-add",`ReviewManager.handleDeletion: ${absFilePath}, type=delete`);
 	mgr.scheduleSave();
 	mgr._onReviewStateChange.fire(true);
 }
 
 export function getOriginalContent(mgr: ReviewManagerInternal, absFilePath: string, existingOriginal?: string): string {
 	// 1. Existing review's original — the TRUE original from before any Claude edits.
-	// This takes priority because snapshots may contain merged content when
-	// mergedApplied is true (PreToolUse hook reads from disk which has merged content).
 	if (existingOriginal !== undefined) {
-		log.log(`ReviewManager: using existing review original for ${absFilePath}`);
+		logCat("file-add", `original source: existingReview for ${absFilePath} (${existingOriginal.length} chars)`);
 		return existingOriginal;
 	}
 
-	// 2. PreToolUse snapshot (file content right before Claude's edit — only used for first edit)
+	// 2. PreToolUse snapshot (file content right before Claude's edit)
 	const snapshot = getSnapshot(absFilePath);
 	if (snapshot !== undefined) {
-		log.log(`ReviewManager: using PreToolUse snapshot for ${absFilePath}`);
+		logCat("file-add", `original source: PreToolUse snapshot for ${absFilePath} (${snapshot.length} chars)`);
 		return snapshot;
 	}
 
@@ -205,10 +215,15 @@ export function getOriginalContent(mgr: ReviewManagerInternal, absFilePath: stri
 				timeout: 5000,
 				stdio: "pipe",
 			});
+			logCat("file-add", `original source: git show HEAD for ${absFilePath} (${content.length} chars)`);
 			return content;
 		}
-	} catch {}
+		logCat("file-add", `original source: file outside workspace (relPath=${relPath}), falling back to empty`);
+	} catch (err) {
+		logCat("file-add", `original source: git show HEAD failed for ${absFilePath}: ${(err as Error).message}, falling back to empty`);
+	}
 
 	// 4. Empty string (new file or external file without snapshot)
+	logCat("file-add", `original source: empty string (new file) for ${absFilePath}`);
 	return "";
 }

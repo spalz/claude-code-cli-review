@@ -28,12 +28,15 @@ export function buildStateUpdate(
 	const currentFile = files[idx];
 	const review = currentFile ? state.activeReviews.get(currentFile) : undefined;
 
-	// Determine if the active editor is a file under review
+	// Determine if the active editor is a file under review.
+	// During file transitions (finalize → open next), activeTextEditor may lag behind
+	// the ReviewManager state. Trust the manager: if transitioning and files remain,
+	// we're opening one — report true to prevent toolbar flash to "Review next file".
 	const activeEditor = vscode.window.activeTextEditor;
 	const activeEditorPath = activeEditor?.document.uri.fsPath;
-	const activeEditorInReview = activeEditorPath
-		? state.activeReviews.has(activeEditorPath)
-		: false;
+	const activeEditorInReview = reviewManager?.isTransitioning
+		? remaining > 0
+		: (activeEditorPath ? state.activeReviews.has(activeEditorPath) : false);
 
 	// Compute undo/redo availability across all review files
 	let canUndo = false;

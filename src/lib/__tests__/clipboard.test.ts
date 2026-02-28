@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("vscode", () => import("./mocks/vscode"));
-vi.mock("../log", () => ({ log: vi.fn() }));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
 vi.mock("../file-logger", () => ({ fileLog: { log: vi.fn() } }));
 
 const mockExecSync = vi.fn();
@@ -157,6 +157,33 @@ describe("ImageTracker", () => {
 	it("shiftPending returns undefined for unknown ptyId", () => {
 		const t = new ImageTracker();
 		expect(t.shiftPending(999)).toBeUndefined();
+	});
+
+	it("clearSession removes pending queue for specific ptyId", () => {
+		const t = new ImageTracker();
+		t.enqueue(1, "/a.png", "b64a", "image/png");
+		t.enqueue(2, "/b.png", "b64b", "image/png");
+
+		t.clearSession(1);
+
+		expect(t.shiftPending(1)).toBeUndefined();
+		// Session 2 unaffected
+		expect(t.shiftPending(2)?.filePath).toBe("/b.png");
+	});
+
+	it("evicts oldest bound entry when exceeding MAX_BOUND (200)", () => {
+		const t = new ImageTracker();
+		// Fill up to MAX_BOUND
+		for (let i = 0; i < 200; i++) {
+			t.bind(i, `/img${i}.png`);
+		}
+		expect(t.getImagePath(0)).toBe("/img0.png");
+
+		// Adding one more should evict the oldest (index 0)
+		t.bind(200, "/img200.png");
+		expect(t.getImagePath(0)).toBeUndefined();
+		expect(t.getImagePath(200)).toBe("/img200.png");
+		expect(t.getImagePath(1)).toBe("/img1.png");
 	});
 });
 

@@ -174,10 +174,13 @@ body {
 	gap: 6px;
 	padding: 3px 8px;
 	border-bottom: 1px solid var(--border);
-	flex-shrink: 0;
 	min-height: 30px;
 	background: var(--bg);
-	position: relative;
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 10;
 }
 .toolbar-group {
 	display: flex;
@@ -298,12 +301,22 @@ body {
 	opacity: 0.25;
 }
 
+/* Compact toolbar: hide hunk nav and accept-all when sidebar is narrow */
+.review-toolbar.compact .toolbar-hunk-nav,
+.review-toolbar.compact .toolbar-hunk-sep {
+	display: none;
+}
+.review-toolbar.compact .toolbar-btn-text.accept-all {
+	display: none;
+}
+
 /* ===== MAIN CONTENT ===== */
 .content {
 	flex: 1;
 	overflow: hidden;
 	display: flex;
 	flex-direction: column;
+	position: relative;
 }
 
 /* Sessions view */

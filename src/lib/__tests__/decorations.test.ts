@@ -15,7 +15,7 @@ vi.mock("vscode", async () => {
 	};
 });
 
-vi.mock("../log", () => ({ log: vi.fn() }));
+vi.mock("../log", () => ({ log: vi.fn(), logCat: vi.fn() }));
 vi.mock("../inline-diff", () => ({
 	computeHunkInlineChanges: vi.fn(() => ({ addedLineChanges: [], removedLineChanges: [] })),
 }));

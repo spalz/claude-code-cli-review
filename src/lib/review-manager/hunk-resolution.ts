@@ -1,14 +1,14 @@
 // Hunk resolution — accept/reject individual or all hunks, finalize files
 import * as vscode from "vscode";
 import * as fs from "fs";
-import * as log from "../log";
+import { log, logCat } from "../log";
 import * as state from "../state";
 import { buildFinalContent, rebuildMerged } from "../review";
-import { applyDecorations, clearDecorations } from "../decorations";
-import { pushUndoState } from "../undo-history";
+import { clearDecorations } from "../decorations";
+import { pushUndoState, hasUndoState, hasRedoState } from "../undo-history";
 import { clearReviewState } from "../persistence";
 import { FileReview } from "../review";
-import { applyContentViaEdit, applyTargetedHunkEdit } from "./content-application";
+import { applyContentViaEdit } from "./content-application";
 import type { ReviewManagerInternal } from "./types";
 
 export async function resolveHunk(
@@ -25,92 +25,39 @@ export async function resolveHunk(
 
 	const fname = filePath.split("/").pop();
 	const preHunkState = review.hunks.map((h) => `${h.id}:${h.resolved ? "R" : "U"}`).join(",");
-	log.log(`ReviewManager.resolveHunk: START ${fname} hunkId=${hunkId} accept=${accept}, hunks=[${preHunkState}]`);
+	logCat("resolve",`ReviewManager.resolveHunk: START ${fname} hunkId=${hunkId} accept=${accept}, hunks=[${preHunkState}]`);
 	pushUndoState(filePath, review);
 
 	hunk.resolved = true;
 	hunk.accepted = accept;
 	const postHunkState = review.hunks.map((h) => `${h.id}:${h.resolved ? (h.accepted ? "A" : "R") : "U"}`).join(",");
-	log.log(`ReviewManager.resolveHunk: file=${filePath}, hunkId=${hunkId}, accept=${accept}, remaining=${review.unresolvedCount}, hunks=[${postHunkState}]`);
+	logCat("resolve",`ReviewManager.resolveHunk: file=${filePath}, hunkId=${hunkId}, accept=${accept}, remaining=${review.unresolvedCount}, hunks=[${postHunkState}]`);
 
 	if (review.isFullyResolved) {
-		log.log(`ReviewManager.resolveHunk: all hunks resolved, finalizing ${filePath}`);
+		logCat("resolve",`ReviewManager.resolveHunk: all hunks resolved, finalizing ${filePath}`);
 		await finalizeFile(mgr, filePath);
 	} else {
-		// Find the hunk range BEFORE rebuilding merged (ranges refer to current buffer)
-		const resolvedRange = review.hunkRanges.find((r) => r.hunkId === hunkId);
-		// Capture pre-rebuild content for buffer validation
-		const preMergedContent = review.mergedLines.join("\n");
-		log.log(`ReviewManager.resolveHunk: pre-rebuild mergedLines=${review.mergedLines.length}, ranges=${review.hunkRanges.length}`);
-		if (resolvedRange) {
-			log.log(`ReviewManager.resolveHunk: resolvedRange hunk${resolvedRange.hunkId} removed=${resolvedRange.removedStart}-${resolvedRange.removedEnd} added=${resolvedRange.addedStart}-${resolvedRange.addedEnd}`);
-		}
-
+		logCat("resolve",`ReviewManager.resolveHunk: pre-rebuild mergedLines=${review.mergedLines.length}, ranges=${review.hunkRanges.length}`);
 		rebuildMerged(review as FileReview);
 		const newCount = review.hunkRanges.length;
-		log.log(`ReviewManager.resolveHunk: post-rebuild mergedLines=${review.mergedLines.length}, ranges=${newCount}`);
+		logCat("resolve",`ReviewManager.resolveHunk: post-rebuild mergedLines=${review.mergedLines.length}, ranges=${newCount}`);
 		if (mgr.currentHunkIndex >= newCount) {
 			mgr.currentHunkIndex = Math.max(0, newCount - 1);
 		}
 		// Reveal the next unresolved hunk to prevent scroll jumping
 		const nextRange = review.hunkRanges[mgr.currentHunkIndex];
-		const revealLine = nextRange ? nextRange.addedStart : undefined;
+		const revealLine = nextRange
+			? (nextRange.removedStart < nextRange.removedEnd ? nextRange.removedStart : nextRange.addedStart)
+			: undefined;
 
-		// Try targeted edit: delete only the resolved hunk's lines (no full-buffer replace)
-		let applied = false;
-		const editor = vscode.window.visibleTextEditors.find(
-			(e) => e.document.uri.fsPath === filePath,
-		);
-		// Validate buffer matches pre-rebuild content; if diverged (e.g. formatOnSave), skip targeted edit
-		const bufferDiverged = editor && editor.document.getText() !== preMergedContent;
-		if (bufferDiverged) {
-			log.log(`resolveHunk: buffer diverged from expected pre-merge content (bufferLen=${editor!.document.getText().length}, expectedLen=${preMergedContent.length}), using full replace`);
-		}
-		if (!editor) {
-			log.log(`resolveHunk: no visible editor for ${filePath}, will use applyContentViaEdit`);
-		}
-		if (resolvedRange && !bufferDiverged) {
-			const isPureDeletion = resolvedRange.removedStart < resolvedRange.removedEnd
-				&& resolvedRange.addedStart === resolvedRange.addedEnd;
-			if (accept && !isPureDeletion) {
-				// Accept: added lines already in buffer (hover-based approach),
-				// no removed lines to delete. Just update decorations.
-				log.log(`resolveHunk: accept — no buffer change needed (hover-based), decorations only`);
-				if (editor) applyDecorations(editor, review);
-				mgr.syncState();
-				mgr.refreshUI();
-				applied = true;
-			} else if (accept && isPureDeletion) {
-				// Accept pure-delete: removed lines are in buffer, need full replace to remove them
-				log.log(`resolveHunk: accept pure-deletion — need buffer update, falling through`);
-				applied = false;
-			} else {
-				// Reject: delete added lines from buffer, removed lines will be
-				// inserted by the full-buffer replace fallback (rebuildMerged already ran)
-				const deleteStart = resolvedRange.addedStart;
-				const deleteEnd = resolvedRange.addedEnd;
-				log.log(`resolveHunk: reject targeted edit deleteStart=${deleteStart}, deleteEnd=${deleteEnd}`);
-				if (deleteStart < deleteEnd) {
-					// Use full-buffer replace since we need to insert removed lines too
-					applied = false; // fall through to full-buffer replace
-				} else {
-					// Pure deletion rejected — nothing in buffer, just decorations
-					log.log(`resolveHunk: reject pure deletion, decorations only`);
-					if (editor) applyDecorations(editor, review);
-					mgr.syncState();
-					mgr.refreshUI();
-					applied = true;
-				}
-			}
-		}
-		// Fallback: full-buffer replace (e.g. no editor open, or targeted edit failed)
-		if (!applied) {
-			log.log(`resolveHunk: using full-buffer replace fallback for ${filePath}`);
-			await applyContentViaEdit(mgr, filePath, review.mergedLines.join("\n"), revealLine);
-		}
+		// Both removed and added lines are in the buffer (inline diff).
+		// Always use full-buffer replace via applyContentViaEdit — it has
+		// its own minimal-diff logic that avoids CodeLens flash on unchanged hunks.
+		logCat("resolve",`resolveHunk: applying full-buffer replace for ${filePath}`);
+		await applyContentViaEdit(mgr, filePath, review.mergedLines.join("\n"), revealLine);
 	}
 	mgr.scheduleSave();
-	log.log(`ReviewManager.resolveHunk: END ${fname} hunkId=${hunkId}, total=${(performance.now() - tResolve).toFixed(1)}ms`);
+	logCat("resolve",`ReviewManager.resolveHunk: END ${fname} hunkId=${hunkId}, total=${(performance.now() - tResolve).toFixed(1)}ms`);
 }
 
 export async function resolveAllHunks(
@@ -120,6 +67,8 @@ export async function resolveAllHunks(
 ): Promise<void> {
 	const review = state.activeReviews.get(filePath);
 	if (!review) return;
+	const unresolvedCount = review.hunks.filter((h) => !h.resolved).length;
+	logCat("resolve", `resolveAllHunks: START ${filePath}, accept=${accept}, totalHunks=${review.hunks.length}, unresolved=${unresolvedCount}`);
 	pushUndoState(filePath, review);
 	for (const h of review.hunks) {
 		if (!h.resolved) {
@@ -127,6 +76,7 @@ export async function resolveAllHunks(
 			h.accepted = accept;
 		}
 	}
+	logCat("resolve", `resolveAllHunks: all ${unresolvedCount} hunks marked ${accept ? "accepted" : "rejected"}, finalizing`);
 	await finalizeFile(mgr, filePath);
 	mgr.scheduleSave();
 }
@@ -138,25 +88,33 @@ export async function finalizeFile(mgr: ReviewManagerInternal, filePath: string)
 	const changeType = review.changeType;
 	const allRejected = review.hunks.every((h) => !h.accepted);
 	const allAccepted = review.hunks.every((h) => h.accepted);
-	log.log(`ReviewManager.finalizeFile: ${filePath}, type=${changeType}, allAccepted=${allAccepted}, allRejected=${allRejected}`);
+	logCat("resolve",`ReviewManager.finalizeFile: ${filePath}, type=${changeType}, allAccepted=${allAccepted}, allRejected=${allRejected}`);
 
 	state.activeReviews.delete(filePath);
+	logCat("resolve", `finalizeFile: after delete — review=false, hasUndo=${hasUndoState(filePath)}, hasRedo=${hasRedoState(filePath)}`);
 
 	if (changeType === "create" && allRejected) {
 		try {
 			fs.unlinkSync(filePath);
-			log.log(`ReviewManager: deleted created file ${filePath}`);
-		} catch {}
+			logCat("resolve", `finalizeFile: deleted created file ${filePath} (rejected new file)`);
+		} catch (err) {
+			logCat("resolve", `finalizeFile: failed to delete created file ${filePath}: ${(err as Error).message}`);
+		}
 	} else if (changeType === "delete" && allRejected) {
 		fs.writeFileSync(filePath, review.originalContent, "utf8");
-		log.log(`ReviewManager: restored deleted file ${filePath}`);
+		logCat("resolve", `finalizeFile: restored deleted file ${filePath} (rejected deletion, ${review.originalContent.length} chars)`);
 	} else if (changeType === "delete" && !allRejected) {
 		try {
 			fs.unlinkSync(filePath);
-			log.log(`ReviewManager: confirmed deletion of ${filePath}`);
-		} catch {}
+			logCat("resolve", `finalizeFile: confirmed deletion of ${filePath} (accepted deletion)`);
+		} catch (err) {
+			logCat("resolve", `finalizeFile: failed to confirm-delete ${filePath}: ${(err as Error).message}`);
+		}
 	} else {
 		const finalContent = buildFinalContent(review);
+		const acceptedCount = review.hunks.filter((h) => h.accepted).length;
+		const rejectedCount = review.hunks.filter((h) => !h.accepted).length;
+		logCat("resolve", `finalizeFile: building final content — ${acceptedCount} accepted, ${rejectedCount} rejected, ${finalContent.length} chars`);
 		await applyContentViaEdit(mgr, filePath, finalContent);
 	}
 
@@ -174,6 +132,7 @@ export async function finalizeFile(mgr: ReviewManagerInternal, filePath: string)
 	const next = mgr.reviewFiles.find((f) => state.activeReviews.has(f));
 	if (next) {
 		mgr.currentFileIndex = mgr.reviewFiles.indexOf(next);
+		mgr.currentHunkIndex = 0;
 		await mgr.openFileForReview(next);
 	} else {
 		vscode.window.showInformationMessage("Claude Code Review: all files reviewed.");
@@ -183,5 +142,16 @@ export async function finalizeFile(mgr: ReviewManagerInternal, filePath: string)
 		mgr.syncState();
 		mgr.refreshUI();
 		mgr._onReviewStateChange.fire(false);
+	}
+
+	// Update context key — onTabSwitch won't fire since the active editor didn't change.
+	// Without this, ccr.activeFileInReview stays stale and Cmd+Z keybinding fails.
+	const activeEditor = vscode.window.activeTextEditor;
+	if (activeEditor) {
+		const activeFp = activeEditor.document.uri.fsPath;
+		const activeReview = state.activeReviews.has(activeFp);
+		const activeHasHistory = hasUndoState(activeFp) || hasRedoState(activeFp);
+		logCat("resolve", `finalizeFile: updating ccr.activeFileInReview=${activeReview || activeHasHistory} for ${activeFp.split("/").pop()}`);
+		vscode.commands.executeCommand("setContext", "ccr.activeFileInReview", activeReview || activeHasHistory);
 	}
 }

@@ -6,7 +6,7 @@
 
 	var FIT_DELAYS_MS = [100, 300, 800];
 	var RECENT_INPUT_MS = 500;
-	var SCROLL_BOTTOM_THRESHOLD = 5;
+	var SCROLL_BOTTOM_THRESHOLD = 20;
 
 	window.addEventListener("message", function (event) {
 		var msg = event.data;
